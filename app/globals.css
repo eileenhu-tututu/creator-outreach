@@ -1,0 +1,39 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background); --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans); --font-mono: var(--font-geist-mono);
+  --color-ring: var(--ring); --color-input: var(--input); --color-border: var(--border);
+  --color-destructive: var(--destructive); --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent); --color-muted-foreground: var(--muted-foreground); --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground); --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground); --color-primary: var(--primary);
+  --color-card-foreground: var(--card-foreground); --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * .6); --radius-md: calc(var(--radius) * .8); --radius-lg: var(--radius); --radius-xl: calc(var(--radius) * 1.4); --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+:root {
+  --background: #0f0f0f; --foreground: #fff; --card: #fff; --card-foreground: #101010;
+  --primary: #ff5400; --primary-foreground: #111; --secondary: #202020; --secondary-foreground: #fff;
+  --muted: #242424; --muted-foreground: #9b9b9b; --accent: #ff5400; --accent-foreground: #111;
+  --destructive: #d93838; --border: rgba(255,255,255,.11); --input: rgba(255,255,255,.14); --ring: #ff5400; --radius: 1rem;
+}
+
+* { border-color: var(--border); }
+html { scroll-behavior: smooth; background: var(--background); }
+body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-geist-sans), Inter, Arial, sans-serif; }
+button, input, textarea { font: inherit; } button { cursor: pointer; } ::selection { background: #ff5400; color: #111; }
+
+@layer components {
+  .light-card { @apply rounded-[28px] bg-[#fbfaf7] text-[#101010]; }
+  .light-input { @apply h-11 rounded-[12px] border-black/10 bg-[#f1f0ed] px-3 text-black shadow-none placeholder:text-black/35 focus-visible:border-[#ff5400] focus-visible:ring-2 focus-visible:ring-[#ff5400]/20; }
+  .field-label { @apply text-[11px] font-bold uppercase tracking-[.1em] text-black/40; }
+  .eyebrow { @apply mb-2 text-[11px] font-bold uppercase tracking-[.16em] text-[#ff5400]; }
+  .section-title { @apply text-[clamp(28px,4vw,46px)] font-black tracking-[-.045em]; }
+}
+
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
