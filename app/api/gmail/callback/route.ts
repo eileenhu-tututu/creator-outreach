@@ -16,5 +16,5 @@ export async function GET(request: Request) {
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: `${siteOrigin}/api/gmail/callback`, grant_type: 'authorization_code' }) });
   if (!tokenResponse.ok) return Response.json({ error: 'Could not connect Gmail.' }, { status: 502 });
   const tokens = (await tokenResponse.json()) as { access_token: string; expires_in?: number };
-  return new Response(null, { status: 302, headers: { Location: `${siteOrigin}/?gmail=connected#results`, 'Set-Cookie': `gmail_access_token=${encodeURIComponent(tokens.access_token)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${tokens.expires_in || 3600}` } });
+  return new Response(null, { status: 302, headers: { Location: `${siteOrigin}/gmail-connected`, 'Set-Cookie': `gmail_access_token=${encodeURIComponent(tokens.access_token)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${tokens.expires_in || 3600}` } });
 }

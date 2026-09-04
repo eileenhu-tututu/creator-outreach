@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 
 const creatorImages = [
@@ -22,6 +23,7 @@ const initialTranscripts = [
 
 type Result = { score: number; hook: string; source: string; reason: string; dm: string; subject: string; email: string; persona: string[] };
 const cleanHandle = (value: string) => value.trim().replace(/^@/, '') || 'creator';
+const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 
 export default function Home() {
   const [username, setUsername] = useState('rainydayrachel');
@@ -42,15 +44,20 @@ export default function Home() {
   const [collectionMessage, setCollectionMessage] = useState('');
   const [emailRecipient, setEmailRecipient] = useState('');
   const [showHtml, setShowHtml] = useState(false);
+  const [emailTemplate, setEmailTemplate] = useState<'clean' | 'bold' | 'editorial'>('bold');
   const [gmailStatus, setGmailStatus] = useState({ connected: false, configured: false });
   const [sending, setSending] = useState(false);
   const [sendMessage, setSendMessage] = useState('');
   const filledVideos = useMemo(() => transcripts.filter((item) => item.trim()).length, [transcripts]);
   const emailHtml = useMemo(() => {
     if (!result) return '';
-    const paragraphs = result.email.split('\n\n').map((paragraph) => `<p style="margin:0 0 18px;line-height:1.65;color:#202020">${paragraph.replace(/\n/g, '<br>')}</p>`).join('');
-    return `<div style="background:#f4f2ed;padding:32px;font-family:Arial,sans-serif"><div style="max-width:620px;margin:auto;background:#ffffff;border-radius:24px;padding:36px"><div style="font-weight:800;font-size:20px;margin-bottom:28px">Creator Outreach <span style="color:#ff5400">●</span></div>${paragraphs}<div style="margin-top:28px;padding:18px 20px;background:#ff5400;border-radius:16px;font-weight:700;color:#111111">${product} · ${commission || 'Creator collaboration'}</div></div></div>`;
-  }, [result, product, commission]);
+    const paragraphs = result.email.split('\n\n').map((paragraph) => `<p style="margin:0 0 18px;line-height:1.65;color:#202020">${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`).join('');
+    const safeProduct = escapeHtml(product);
+    const safeOffer = escapeHtml(commission || 'Creator collaboration');
+    if (emailTemplate === 'clean') return `<div style="background:#ffffff;padding:28px;font-family:Arial,sans-serif"><div style="max-width:620px;margin:auto"><div style="width:42px;height:5px;background:#ff5400;border-radius:9px;margin-bottom:32px"></div>${paragraphs}<div style="margin-top:30px;border-top:1px solid #e8e8e8;padding-top:18px;font-size:13px;color:#666666">${safeProduct} · ${safeOffer}</div></div></div>`;
+    if (emailTemplate === 'editorial') return `<div style="background:#efece5;padding:36px;font-family:Georgia,serif"><div style="max-width:620px;margin:auto;background:#fffdf8;border:1px solid #d9d3c7;padding:42px"><div style="font-family:Arial,sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#777;margin-bottom:14px">A personal note for @${escapeHtml(cleanHandle(username))}</div><div style="font-size:30px;line-height:1.15;font-weight:bold;margin-bottom:30px;color:#111">A collaboration made for your content.</div>${paragraphs}<div style="margin-top:28px;padding:18px 0;border-top:2px solid #111;border-bottom:2px solid #111;font-family:Arial,sans-serif;font-weight:bold;color:#111">${safeProduct} <span style="float:right;color:#ff5400">${safeOffer}</span></div></div></div>`;
+    return `<div style="background:#f4f2ed;padding:32px;font-family:Arial,sans-serif"><div style="max-width:620px;margin:auto;background:#ffffff;border-radius:24px;padding:36px"><div style="font-weight:800;font-size:20px;margin-bottom:28px">Creator Outreach <span style="color:#ff5400">●</span></div>${paragraphs}<div style="margin-top:28px;padding:18px 20px;background:#ff5400;border-radius:16px;font-weight:700;color:#111111">${safeProduct} · ${safeOffer}</div></div></div>`;
+  }, [result, product, commission, emailTemplate, username]);
 
   useEffect(() => {
     const selected = window.localStorage.getItem('creator-outreach-selected-product');
@@ -65,7 +72,16 @@ export default function Home() {
         window.localStorage.removeItem('creator-outreach-selected-product');
       } catch { /* Ignore invalid local data. */ }
     }
-    fetch('/api/gmail/status').then((response) => response.json()).then(setGmailStatus).catch(() => undefined);
+    const refreshGmailStatus = () => fetch('/api/gmail/status').then((response) => response.json()).then(setGmailStatus).catch(() => undefined);
+    const handleOauthMessage = (event: MessageEvent) => {
+      if (event.origin === window.location.origin && event.data?.type === 'gmail-connected') {
+        refreshGmailStatus();
+        setSendMessage('Gmail connected. Your work stayed right here.');
+      }
+    };
+    refreshGmailStatus();
+    window.addEventListener('message', handleOauthMessage);
+    return () => window.removeEventListener('message', handleOauthMessage);
   }, []);
 
   const buildResult = (tone: 'default' | 'shorter' | 'casual' | 'soft' = 'default'): Result => {
@@ -143,6 +159,12 @@ export default function Home() {
     finally { setSending(false); }
   };
 
+  const connectGmail = () => {
+    setSendMessage('');
+    const popup = window.open('/api/gmail/connect', 'gmail-oauth', 'popup=yes,width=540,height=720');
+    if (!popup) setSendMessage('Pop-up blocked. Allow pop-ups for this site and try again.');
+  };
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <nav className="sticky top-0 z-40 border-b border-white/10 bg-[#0f0f0f]/95 backdrop-blur-md">
@@ -189,7 +211,9 @@ export default function Home() {
             <article className="light-card p-5 sm:p-7"><div className="mb-6 flex items-center justify-between"><div className="flex items-center gap-2"><MessageCircle className="size-4" /><h3 className="font-black">TikTok / IG DM</h3></div><Button onClick={() => copyText('dm', result.dm)} variant="outline" className="h-9 rounded-full border-black/10 bg-transparent text-black hover:bg-black hover:text-white">{copied === 'dm' ? <Check /> : <Copy />} {copied === 'dm' ? 'Copied' : 'Copy'}</Button></div><Textarea value={result.dm} onChange={(e) => setResult({ ...result, dm: e.target.value })} className="min-h-[180px] resize-none rounded-[18px] border-0 bg-[#f1f0ed] p-5 text-base leading-7 text-black focus-visible:ring-2 focus-visible:ring-[#ff5400]" /><div className="mt-4 flex flex-wrap gap-2">{[['Shorter','shorter'],['More casual','casual'],['Less salesy','soft']].map(([label,tone]) => <Button key={tone} onClick={() => generate(tone as 'shorter' | 'casual' | 'soft')} variant="outline" className="rounded-full border-black/10 bg-transparent text-black hover:bg-black hover:text-white">{label}</Button>)}<Button onClick={() => generate()} variant="ghost" className="ml-auto rounded-full text-black/50 hover:bg-black/5 hover:text-black"><RefreshCw /> Regenerate</Button></div></article>
             <article className="rounded-[28px] bg-[#ff5400] p-5 text-black sm:p-7"><div className="mb-7 flex items-center justify-between"><div className="flex items-center gap-2"><Sparkles className="size-4" /><h3 className="font-black">Best hook</h3></div><Badge className="rounded-full bg-black text-white">LOW RISK</Badge></div><p className="text-[clamp(30px,4vw,48px)] font-black leading-[1.02] tracking-[-.05em]">“{result.hook}”</p><div className="mt-8 flex items-center justify-between border-t border-black/15 pt-4 text-xs font-bold"><span>Source verified</span><span className="flex items-center gap-1"><Clipboard className="size-3.5" /> {result.source}</span></div></article>
             <article className="light-card p-5 sm:p-7 xl:col-span-2"><div className="mb-6 flex items-center justify-between"><div className="flex items-center gap-2"><Mail className="size-4" /><h3 className="font-black">Email</h3></div><Button onClick={() => copyText('email', `${result.subject}\n\n${result.email}`)} variant="outline" className="h-9 rounded-full border-black/10 bg-transparent text-black hover:bg-black hover:text-white">{copied === 'email' ? <Check /> : <Copy />} {copied === 'email' ? 'Copied' : 'Copy all'}</Button></div><div className="grid gap-4 lg:grid-cols-[.72fr_1.28fr]"><div className="rounded-[18px] bg-[#f1f0ed] p-5"><p className="field-label">Subject</p><Input value={result.subject} onChange={(e) => setResult({ ...result, subject: e.target.value })} className="mt-3 h-auto border-0 bg-transparent p-0 text-base font-bold text-black focus-visible:ring-0" /><div className="mt-8 border-t border-black/8 pt-5"><p className="field-label">Creator tone</p><div className="mt-3 flex flex-wrap gap-2">{result.persona.map((item) => <Badge key={item} className="rounded-full bg-white text-black">{item}</Badge>)}</div></div></div><Textarea value={result.email} onChange={(e) => setResult({ ...result, email: e.target.value })} className="min-h-[260px] resize-none rounded-[18px] border-0 bg-[#f1f0ed] p-5 text-[15px] leading-7 text-black focus-visible:ring-2 focus-visible:ring-[#ff5400]" /></div>
-              <div className="mt-5 grid gap-4 rounded-[18px] bg-black p-5 text-white lg:grid-cols-[1fr_auto]"><div><div className="flex items-center gap-2"><Send className="size-4 text-[#ff5400]" /><p className="font-bold">HTML email delivery</p><Badge className={`rounded-full ${gmailStatus.connected ? 'bg-[#dff6e4] text-[#216c34]' : 'bg-white/10 text-white/55'}`}>{gmailStatus.connected ? 'GMAIL CONNECTED' : gmailStatus.configured ? 'READY TO CONNECT' : 'SETUP REQUIRED'}</Badge></div><Input type="email" value={emailRecipient} onChange={(e) => setEmailRecipient(e.target.value)} placeholder="creator@email.com" className="mt-4 h-10 max-w-md border-white/15 bg-white/8 text-white placeholder:text-white/35 focus-visible:border-[#ff5400] focus-visible:ring-0" />{sendMessage && <p className="mt-2 text-xs text-white/55">{sendMessage}</p>}</div><div className="flex flex-wrap items-end gap-2"><Button onClick={() => setShowHtml(!showHtml)} variant="outline" className="rounded-full border-white/15 bg-transparent text-white hover:bg-white hover:text-black"><Code2 /> {showHtml ? 'Hide HTML' : 'Preview HTML'}</Button>{!gmailStatus.connected ? <a href="/api/gmail/connect" className="inline-flex h-8 items-center gap-2 rounded-full bg-white px-4 text-sm font-bold text-black">Connect Gmail</a> : <Button onClick={sendEmail} disabled={sending || !emailRecipient.trim()} className="rounded-full bg-[#ff5400] px-5 font-bold text-black hover:bg-[#ff6a1a]">{sending ? <RefreshCw className="animate-spin" /> : <Send />} Send HTML</Button>}</div></div>
+              <div className="mt-5 rounded-[18px] bg-black p-5 text-white"><div className="grid gap-5 lg:grid-cols-[1fr_auto]"><div><div className="flex flex-wrap items-center gap-2"><Send className="size-4 text-[#ff5400]" /><p className="font-bold">HTML email delivery</p><Badge className={`rounded-full ${gmailStatus.connected ? 'bg-[#dff6e4] text-[#216c34]' : 'bg-white/10 text-white/55'}`}>{gmailStatus.connected ? 'GMAIL CONNECTED' : gmailStatus.configured ? 'READY TO CONNECT' : 'SETUP REQUIRED'}</Badge></div><Input type="email" value={emailRecipient} onChange={(e) => setEmailRecipient(e.target.value)} placeholder="creator@email.com" className="mt-4 h-10 max-w-md border-white/15 bg-white/8 text-white placeholder:text-white/35 focus-visible:border-[#ff5400] focus-visible:ring-0" />{sendMessage && <p className="mt-2 text-xs text-white/55">{sendMessage}</p>}</div><div className="flex flex-wrap items-end gap-2"><Button onClick={() => setShowHtml(!showHtml)} variant="outline" className="rounded-full border-white/15 bg-transparent text-white hover:bg-white hover:text-black"><Code2 /> {showHtml ? 'Hide preview' : 'Preview HTML'}</Button>{!gmailStatus.connected ? <Button onClick={connectGmail} className="rounded-full bg-white px-4 font-bold text-black hover:bg-white/85">Connect Gmail</Button> : <Button onClick={sendEmail} disabled={sending || !emailRecipient.trim()} className="rounded-full bg-[#ff5400] px-5 font-bold text-black hover:bg-[#ff6a1a]">{sending ? <RefreshCw className="animate-spin" /> : <Send />} Send HTML</Button>}</div></div>
+                <div className="mt-5 border-t border-white/10 pt-5"><p className="mb-3 text-xs font-bold uppercase tracking-[.12em] text-white/45">Email design</p><Tabs value={emailTemplate} onValueChange={(value) => setEmailTemplate(value as 'clean' | 'bold' | 'editorial')}><TabsList className="h-auto w-full rounded-[14px] bg-white/8 p-1 sm:w-fit"><TabsTrigger value="clean" className="min-h-9 px-4 data-active:bg-white data-active:text-black">Clean</TabsTrigger><TabsTrigger value="bold" className="min-h-9 px-4 data-active:bg-[#ff5400] data-active:text-black">Bold orange</TabsTrigger><TabsTrigger value="editorial" className="min-h-9 px-4 data-active:bg-[#efece5] data-active:text-black">Editorial</TabsTrigger></TabsList></Tabs></div>
+              </div>
               {showHtml && <iframe title="HTML email preview" srcDoc={emailHtml} className="mt-4 h-[440px] w-full rounded-[18px] border border-black/10 bg-white" />}
             </article>
           </div>
