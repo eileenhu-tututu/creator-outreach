@@ -23,6 +23,7 @@ const initialTranscripts = [
 ];
 
 type Result = { score: number; hook: string; source: string; evidence: string; reason: string; dm: string; subject: string; email: string; persona: string[] };
+type InlineEmailImage = { dataUrl: string; data: string; mimeType: string; filename: string; cid: string };
 const cleanHandle = (value: string) => value.trim().replace(/^@/, '') || 'creator';
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 const safeHttpUrl = (value: string) => {
@@ -54,8 +55,10 @@ export default function Home() {
   const [collecting, setCollecting] = useState(false);
   const [collectionMessage, setCollectionMessage] = useState('');
   const [emailRecipient, setEmailRecipient] = useState('');
-  const [showHtml, setShowHtml] = useState(false);
+  const [showHtml, setShowHtml] = useState(true);
   const [emailImageUrl, setEmailImageUrl] = useState('');
+  const [emailImageFile, setEmailImageFile] = useState<InlineEmailImage | null>(null);
+  const [emailImageError, setEmailImageError] = useState('');
   const [emailImageAlt, setEmailImageAlt] = useState('Product image');
   const [emailImagePosition, setEmailImagePosition] = useState<'top' | 'after-intro' | 'bottom'>('after-intro');
   const [emailImageWidth, setEmailImageWidth] = useState<'full' | 'medium'>('full');
@@ -70,20 +73,24 @@ export default function Home() {
   const matchesFresh = productMatches.length > 0 && matchSignature === creatorSignature;
   const selectedMatch = productMatches.find((item) => item.product.id === selectedProductId) || null;
   const emailHtml = useMemo(() => {
-    if (!result) return '';
+    if (!result) return { preview: '', send: '' };
     const paragraphs = result.email.split('\n\n').map((paragraph) => `<p style="margin:0 0 18px;line-height:1.65;color:#202020">${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`);
     const safeProduct = escapeHtml(product);
     const safeOffer = escapeHtml(commission || 'Creator collaboration');
-    const imageUrl = safeHttpUrl(emailImageUrl);
     const buttonUrl = safeHttpUrl(ctaUrl);
-    const imageBlock = imageUrl ? `<div style="margin:8px 0 24px;text-align:center"><img src="${imageUrl}" alt="${escapeHtml(emailImageAlt)}" width="${emailImageWidth === 'full' ? '548' : '420'}" style="display:inline-block;width:${emailImageWidth === 'full' ? '100%' : '76%'};max-width:${emailImageWidth === 'full' ? '548px' : '420px'};height:auto;border:0;border-radius:16px;object-fit:cover" /></div>` : '';
     const offerBlock = includeOffer ? `<div style="margin-top:26px;padding:18px 20px;background:#ff5400;border-radius:14px;font-weight:700;color:#111111">${safeProduct} · ${safeOffer}</div>` : '';
     const ctaBlock = buttonUrl && ctaText.trim() ? `<div style="margin-top:24px"><a href="${buttonUrl}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;padding:13px 20px;border-radius:999px;font-weight:700">${escapeHtml(ctaText.trim())}</a></div>` : '';
-    const body = emailImagePosition === 'after-intro' && imageBlock
-      ? [paragraphs[0], imageBlock, ...paragraphs.slice(1)].join('')
-      : paragraphs.join('');
-    return `<div style="background:#f4f2ed;padding:32px;font-family:Arial,sans-serif"><div style="max-width:620px;margin:auto;background:#ffffff;border-radius:24px;padding:36px"><div style="font-weight:800;font-size:20px;margin-bottom:28px">Creator Outreach <span style="color:#ff5400">●</span></div>${emailImagePosition === 'top' ? imageBlock : ''}${body}${emailImagePosition === 'bottom' ? imageBlock : ''}${offerBlock}${ctaBlock}</div></div>`;
-  }, [result, product, commission, emailImageUrl, emailImageAlt, emailImagePosition, emailImageWidth, ctaText, ctaUrl, includeOffer]);
+    const build = (imageSource: string) => {
+      const imageBlock = imageSource ? `<div style="margin:8px 0 24px;text-align:center"><img src="${imageSource}" alt="${escapeHtml(emailImageAlt)}" width="${emailImageWidth === 'full' ? '548' : '420'}" style="display:inline-block;width:${emailImageWidth === 'full' ? '100%' : '76%'};max-width:${emailImageWidth === 'full' ? '548px' : '420px'};height:auto;border:0;border-radius:16px;object-fit:cover" /></div>` : '';
+      const body = emailImagePosition === 'after-intro' && imageBlock ? [paragraphs[0], imageBlock, ...paragraphs.slice(1)].join('') : paragraphs.join('');
+      return `<div style="background:#f4f2ed;padding:32px;font-family:Arial,sans-serif"><div style="max-width:620px;margin:auto;background:#ffffff;border-radius:24px;padding:36px"><div style="font-weight:800;font-size:20px;margin-bottom:28px">Creator Outreach <span style="color:#ff5400">●</span></div>${emailImagePosition === 'top' ? imageBlock : ''}${body}${emailImagePosition === 'bottom' ? imageBlock : ''}${offerBlock}${ctaBlock}</div></div>`;
+    };
+    const remoteImage = safeHttpUrl(emailImageUrl);
+    return {
+      preview: build(emailImageFile?.dataUrl || remoteImage),
+      send: build(emailImageFile ? `cid:${emailImageFile.cid}` : remoteImage),
+    };
+  }, [result, product, commission, emailImageUrl, emailImageFile, emailImageAlt, emailImagePosition, emailImageWidth, ctaText, ctaUrl, includeOffer]);
 
   useEffect(() => {
     let nextProducts = defaultProducts;
@@ -199,11 +206,39 @@ export default function Home() {
     finally { setCollecting(false); }
   };
 
+  const uploadEmailImage = (file?: File) => {
+    if (!file) return;
+    setEmailImageError('');
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+      setEmailImageError('Use a PNG, JPG, GIF or WebP image.');
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      setEmailImageError('Image must be smaller than 3 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      const data = dataUrl.split(',')[1] || '';
+      if (!data) {
+        setEmailImageError('Could not read this image.');
+        return;
+      }
+      setEmailImageFile({ dataUrl, data, mimeType: file.type, filename: file.name.replace(/[\r\n"]/g, '_'), cid: 'outreach-product-image' });
+      setEmailImageUrl('');
+      setEmailImageAlt(file.name.replace(/\.[^.]+$/, '') || 'Product image');
+      setShowHtml(true);
+    };
+    reader.onerror = () => setEmailImageError('Could not read this image.');
+    reader.readAsDataURL(file);
+  };
+
   const sendEmail = async () => {
     if (!result || !emailRecipient.trim()) return;
     setSending(true); setSendMessage('');
     try {
-      const response = await fetch('/api/gmail/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: emailRecipient, subject: result.subject, html: emailHtml, text: result.email }) });
+      const response = await fetch('/api/gmail/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: emailRecipient, subject: result.subject, html: emailHtml.send, text: result.email, inlineImage: emailImageFile ? { data: emailImageFile.data, mimeType: emailImageFile.mimeType, filename: emailImageFile.filename, cid: emailImageFile.cid } : undefined }) });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error || 'Send failed.');
       setSendMessage('Email sent successfully.');
@@ -267,9 +302,15 @@ export default function Home() {
             <article className="rounded-[28px] bg-[#ff5400] p-5 text-black sm:p-7"><div className="mb-7 flex items-center justify-between"><div className="flex items-center gap-2"><Sparkles className="size-4" /><h3 className="font-black">Best hook</h3></div><Badge className="rounded-full bg-black text-white">LOW RISK</Badge></div><p className="text-[clamp(30px,4vw,48px)] font-black leading-[1.02] tracking-[-.05em]">“{result.hook}”</p><div className="mt-8 flex items-center justify-between border-t border-black/15 pt-4 text-xs font-bold"><span>Source verified</span><span className="flex items-center gap-1"><Clipboard className="size-3.5" /> {result.source}</span></div></article>
             <article className="light-card p-5 sm:p-7 xl:col-span-2"><div className="mb-6 flex items-center justify-between"><div className="flex items-center gap-2"><Mail className="size-4" /><h3 className="font-black">Email</h3></div><Button onClick={() => copyText('email', `${result.subject}\n\n${result.email}`)} variant="outline" className="h-9 rounded-full border-black/10 bg-transparent text-black hover:bg-black hover:text-white">{copied === 'email' ? <Check /> : <Copy />} {copied === 'email' ? 'Copied' : 'Copy all'}</Button></div><div className="grid gap-4 lg:grid-cols-[.72fr_1.28fr]"><div className="rounded-[18px] bg-[#f1f0ed] p-5"><p className="field-label">Subject</p><Input value={result.subject} onChange={(e) => setResult({ ...result, subject: e.target.value })} className="mt-3 h-auto border-0 bg-transparent p-0 text-base font-bold text-black focus-visible:ring-0" /><div className="mt-8 border-t border-black/8 pt-5"><p className="field-label">Creator tone</p><div className="mt-3 flex flex-wrap gap-2">{result.persona.map((item) => <Badge key={item} className="rounded-full bg-white text-black">{item}</Badge>)}</div></div></div><Textarea value={result.email} onChange={(e) => setResult({ ...result, email: e.target.value })} className="min-h-[260px] resize-none rounded-[18px] border-0 bg-[#f1f0ed] p-5 text-[15px] leading-7 text-black focus-visible:ring-2 focus-visible:ring-[#ff5400]" /></div>
               <div className="mt-5 rounded-[18px] bg-black p-5 text-white"><div className="grid gap-5 lg:grid-cols-[1fr_auto]"><div><div className="flex flex-wrap items-center gap-2"><Send className="size-4 text-[#ff5400]" /><p className="font-bold">HTML email delivery</p><Badge className={`rounded-full ${gmailStatus.connected ? 'bg-[#dff6e4] text-[#216c34]' : 'bg-white/10 text-white/55'}`}>{gmailStatus.connected ? 'GMAIL CONNECTED' : gmailStatus.configured ? 'READY TO CONNECT' : 'SETUP REQUIRED'}</Badge></div><Input type="email" value={emailRecipient} onChange={(e) => setEmailRecipient(e.target.value)} placeholder="creator@email.com" className="mt-4 h-10 max-w-md border-white/15 bg-white/8 text-white placeholder:text-white/35 focus-visible:border-[#ff5400] focus-visible:ring-0" />{sendMessage && <p className="mt-2 text-xs text-white/55">{sendMessage}</p>}</div><div className="flex flex-wrap items-end gap-2"><Button onClick={() => setShowHtml(!showHtml)} variant="outline" className="rounded-full border-white/15 bg-transparent text-white hover:bg-white hover:text-black"><Code2 /> {showHtml ? 'Hide preview' : 'Preview HTML'}</Button>{!gmailStatus.connected ? <Button onClick={connectGmail} className="rounded-full bg-white px-4 font-bold text-black hover:bg-white/85">Connect Gmail</Button> : <Button onClick={sendEmail} disabled={sending || !emailRecipient.trim()} className="rounded-full bg-[#ff5400] px-5 font-bold text-black hover:bg-[#ff6a1a]">{sending ? <RefreshCw className="animate-spin" /> : <Send />} Send HTML</Button>}</div></div>
-                <div className="mt-5 border-t border-white/10 pt-5"><div className="mb-4 flex items-center gap-2"><ImageIcon className="size-4 text-[#ff5400]" /><p className="text-xs font-bold uppercase tracking-[.12em] text-white/45">Email content blocks</p></div><div className="grid gap-3 md:grid-cols-2"><label className="text-xs font-semibold text-white/55">Image URL<Input value={emailImageUrl} onChange={(e) => setEmailImageUrl(e.target.value)} placeholder="https://…/product.jpg" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label><label className="text-xs font-semibold text-white/55">Image description<Input value={emailImageAlt} onChange={(e) => setEmailImageAlt(e.target.value)} placeholder="Product image" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label><label className="text-xs font-semibold text-white/55">Image position<Select value={emailImagePosition} onValueChange={(value) => value && setEmailImagePosition(value as 'top' | 'after-intro' | 'bottom')}><SelectTrigger className="mt-2 h-10 w-full border-white/15 bg-white/8 text-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="top">Top of email</SelectItem><SelectItem value="after-intro">After opening paragraph</SelectItem><SelectItem value="bottom">After message</SelectItem></SelectContent></Select></label><label className="text-xs font-semibold text-white/55">Image width<Select value={emailImageWidth} onValueChange={(value) => value && setEmailImageWidth(value as 'full' | 'medium')}><SelectTrigger className="mt-2 h-10 w-full border-white/15 bg-white/8 text-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="full">Full width</SelectItem><SelectItem value="medium">Medium, centered</SelectItem></SelectContent></Select></label><label className="text-xs font-semibold text-white/55"><span className="flex items-center gap-1.5"><Link2 className="size-3.5" /> Button text</span><Input value={ctaText} onChange={(e) => setCtaText(e.target.value)} placeholder="View collaboration details" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label><label className="text-xs font-semibold text-white/55">Button link<Input value={ctaUrl} onChange={(e) => setCtaUrl(e.target.value)} placeholder="https://…" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label></div><label className="mt-4 flex items-center justify-between rounded-[14px] bg-white/7 px-4 py-3 text-sm font-semibold"><span>Include product + commission block</span><Switch checked={includeOffer} onCheckedChange={setIncludeOffer} className="data-checked:bg-[#ff5400]" /></label><p className="mt-3 text-xs leading-5 text-white/35">Use a public HTTPS image URL. The preview and sent email update automatically.</p></div>
+                <div className="mt-5 border-t border-white/10 pt-5">
+                  <div className="mb-4 flex items-center gap-2"><ImageIcon className="size-4 text-[#ff5400]" /><p className="text-xs font-bold uppercase tracking-[.12em] text-white/45">Email content blocks</p></div>
+                  <div className="mb-4 grid gap-3 rounded-[16px] bg-white/7 p-4 md:grid-cols-[1fr_auto] md:items-center"><div className="flex items-center gap-3">{emailImageFile ? <img src={emailImageFile.dataUrl} alt={emailImageAlt} className="size-16 rounded-[12px] object-cover" /> : <span className="grid size-16 shrink-0 place-items-center rounded-[12px] border border-dashed border-white/20 text-white/35"><ImageIcon className="size-5" /></span>}<div><p className="text-sm font-bold">{emailImageFile ? emailImageFile.filename : 'Upload an inline email image'}</p><p className="mt-1 text-xs leading-5 text-white/40">PNG, JPG, GIF or WebP · max 3 MB. The image is attached inside the email, not linked externally.</p></div></div><div className="flex gap-2"><label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full bg-white px-4 text-sm font-bold text-black hover:bg-white/85"><Upload className="size-4" /> {emailImageFile ? 'Replace' : 'Upload'}<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="sr-only" onChange={(event) => { uploadEmailImage(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label>{emailImageFile && <Button type="button" onClick={() => setEmailImageFile(null)} variant="outline" className="h-9 rounded-full border-white/15 bg-transparent text-white hover:bg-white hover:text-black">Remove</Button>}</div></div>
+                  {emailImageError && <p className="mb-4 text-xs font-semibold text-[#ffb18c]">{emailImageError}</p>}
+                  <div className="grid gap-3 md:grid-cols-2"><label className="text-xs font-semibold text-white/55">Or use a public image URL<Input value={emailImageUrl} onChange={(e) => { setEmailImageUrl(e.target.value); if (e.target.value) { setEmailImageFile(null); setShowHtml(true); } }} placeholder="https://…/product.jpg" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label><label className="text-xs font-semibold text-white/55">Image description<Input value={emailImageAlt} onChange={(e) => setEmailImageAlt(e.target.value)} placeholder="Product image" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label><label className="text-xs font-semibold text-white/55">Image position<Select value={emailImagePosition} onValueChange={(value) => value && setEmailImagePosition(value as 'top' | 'after-intro' | 'bottom')}><SelectTrigger className="mt-2 h-10 w-full border-white/15 bg-white/8 text-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="top">Top of email</SelectItem><SelectItem value="after-intro">After opening paragraph</SelectItem><SelectItem value="bottom">After message</SelectItem></SelectContent></Select></label><label className="text-xs font-semibold text-white/55">Image width<Select value={emailImageWidth} onValueChange={(value) => value && setEmailImageWidth(value as 'full' | 'medium')}><SelectTrigger className="mt-2 h-10 w-full border-white/15 bg-white/8 text-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="full">Full width</SelectItem><SelectItem value="medium">Medium, centered</SelectItem></SelectContent></Select></label><label className="text-xs font-semibold text-white/55"><span className="flex items-center gap-1.5"><Link2 className="size-3.5" /> Button text</span><Input value={ctaText} onChange={(e) => setCtaText(e.target.value)} placeholder="View collaboration details" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label><label className="text-xs font-semibold text-white/55">Button link<Input value={ctaUrl} onChange={(e) => setCtaUrl(e.target.value)} placeholder="https://…" className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/25 focus-visible:border-[#ff5400] focus-visible:ring-0" /></label></div>
+                  <label className="mt-4 flex items-center justify-between rounded-[14px] bg-white/7 px-4 py-3 text-sm font-semibold"><span>Include matched product + commission block</span><Switch checked={includeOffer} onCheckedChange={setIncludeOffer} className="data-checked:bg-[#ff5400]" /></label><p className="mt-3 text-xs leading-5 text-white/35">The preview below and the delivered HTML are generated from the same content. Uploaded images are embedded as inline attachments for reliable Gmail display.</p>
+                </div>
               </div>
-              {showHtml && <iframe title="HTML email preview" srcDoc={emailHtml} className="mt-4 h-[440px] w-full rounded-[18px] border border-black/10 bg-white" />}
+              {showHtml && <div className="mt-4"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold uppercase tracking-[.12em] text-black/40">Final HTML preview</p><p className="text-xs text-black/40">Matches the sent email</p></div><iframe title="HTML email preview" srcDoc={emailHtml.preview} className="h-[520px] w-full rounded-[18px] border border-black/10 bg-white" /></div>}
             </article>
           </div>
         </div>}
