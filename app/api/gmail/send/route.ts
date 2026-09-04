@@ -1,3 +1,5 @@
+import { sanitizeEmailHtml } from '@/lib/email-template';
+
 function cookieValue(request: Request, name: string) {
   const cookies = request.headers.get('cookie') || '';
   const value = cookies.split(';').map((item) => item.trim()).find((item) => item.startsWith(`${name}=`))?.slice(name.length + 1);
@@ -69,6 +71,7 @@ export async function POST(request: Request) {
     }
   }
 
+  const safeHtml = sanitizeEmailHtml(html);
   const alternativeBoundary = `outreach_alternative_${crypto.randomUUID()}`;
   const alternativeParts = [
     `--${alternativeBoundary}`,
@@ -80,7 +83,7 @@ export async function POST(request: Request) {
     'Content-Type: text/html; charset="UTF-8"',
     'Content-Transfer-Encoding: 8bit',
     '',
-    html,
+    safeHtml,
     `--${alternativeBoundary}--`,
   ];
 
