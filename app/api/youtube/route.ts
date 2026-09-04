@@ -52,7 +52,7 @@ export async function POST(request: Request) {
   const videosResponse = await fetch(videosUrl);
   if (!videosResponse.ok) return Response.json({ error: 'Could not load recent channel videos.' }, { status: 502 });
   const videosData = (await videosResponse.json()) as { items?: PlaylistVideo[] };
-  const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const recent = (videosData.items || []).filter((item) => new Date(item.snippet.publishedAt).getTime() >= since).slice(0, maxVideos);
 
   const videos = await Promise.all(recent.map(async (item) => {
@@ -69,5 +69,5 @@ export async function POST(request: Request) {
     return { videoId, title: item.snippet.title, publishedAt: item.snippet.publishedAt, thumbnail: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url, url: videoUrl, transcript, status: data.jobId ? 'processing' : transcript ? 'ready' : 'failed', jobId: data.jobId };
   }));
 
-  return Response.json({ channel: { id: channelId, title: match.snippet.title, avatar: match.snippet.thumbnails?.default?.url }, rangeDays: 30, videos });
+  return Response.json({ channel: { id: channelId, title: match.snippet.title, avatar: match.snippet.thumbnails?.default?.url }, rangeDays: 7, videos });
 }
