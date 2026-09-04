@@ -12,6 +12,29 @@ type PlaylistVideo = {
   };
 };
 
+type GoogleApiError = {
+  error?: {
+    code?: number;
+    message?: string;
+    errors?: Array<{ reason?: string }>;
+  };
+};
+
+async function youtubeError(response: Response, fallback: string) {
+  const data = await response.json().catch(() => ({})) as GoogleApiError;
+  const reason = data.error?.errors?.[0]?.reason;
+  if (response.status === 401 || response.status === 403) {
+    return Response.json({
+      error: 'youtube_credentials_rejected',
+      message: reason === 'quotaExceeded'
+        ? 'YouTube API quota is exhausted. Try again after the quota resets.'
+        : 'The saved YouTube API key was rejected. Enable YouTube Data API v3 and replace YOUTUBE_API_KEY with a valid API key from Google Cloud.',
+      providerMessage: data.error?.message,
+    }, { status: response.status });
+  }
+  return Response.json({ error: 'youtube_request_failed', message: fallback, providerMessage: data.error?.message }, { status: 502 });
+}
+
 export async function POST(request: Request) {
   const youtubeKey = process.env.YOUTUBE_API_KEY;
   const transcriptKey = process.env.SUPADATA_API_KEY;
@@ -34,7 +57,7 @@ export async function POST(request: Request) {
   const searchUrl = new URL(`${yt}/search`);
   searchUrl.search = new URLSearchParams({ part: 'snippet', q: channel, type: 'channel', maxResults: '1', key: youtubeKey }).toString();
   const searchResponse = await fetch(searchUrl);
-  if (!searchResponse.ok) return Response.json({ error: 'YouTube channel lookup failed.' }, { status: 502 });
+  if (!searchResponse.ok) return youtubeError(searchResponse, 'YouTube channel lookup failed.');
   const searchData = (await searchResponse.json()) as { items?: YouTubeSearchItem[] };
   const match = searchData.items?.[0];
   const channelId = match?.id.channelId;
@@ -43,6 +66,7 @@ export async function POST(request: Request) {
   const channelUrl = new URL(`${yt}/channels`);
   channelUrl.search = new URLSearchParams({ part: 'contentDetails', id: channelId, key: youtubeKey }).toString();
   const channelResponse = await fetch(channelUrl);
+  if (!channelResponse.ok) return youtubeError(channelResponse, 'Could not load the YouTube channel.');
   const channelData = (await channelResponse.json()) as { items?: Array<{ contentDetails?: { relatedPlaylists?: { uploads?: string } } }> };
   const uploadsId = channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploadsId) return Response.json({ error: 'The channel upload list is unavailable.' }, { status: 404 });
@@ -50,7 +74,7 @@ export async function POST(request: Request) {
   const videosUrl = new URL(`${yt}/playlistItems`);
   videosUrl.search = new URLSearchParams({ part: 'snippet', playlistId: uploadsId, maxResults: '50', key: youtubeKey }).toString();
   const videosResponse = await fetch(videosUrl);
-  if (!videosResponse.ok) return Response.json({ error: 'Could not load recent channel videos.' }, { status: 502 });
+  if (!videosResponse.ok) return youtubeError(videosResponse, 'Could not load recent channel videos.');
   const videosData = (await videosResponse.json()) as { items?: PlaylistVideo[] };
   const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const recent = (videosData.items || []).filter((item) => new Date(item.snippet.publishedAt).getTime() >= since).slice(0, maxVideos);
