@@ -11,6 +11,13 @@ function base64Url(value: string) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function base64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(binary);
+}
+
 type InlineImage = {
   data?: string;
   mimeType?: string;
@@ -20,6 +27,22 @@ type InlineImage = {
 
 function cleanHeader(value: string) {
   return value.replace(/[\r\n"]/g, '_');
+}
+
+function encodeMimeHeader(value: string) {
+  const cleaned = cleanHeader(value).trim();
+  const chunks: string[] = [];
+  let chunk = '';
+  for (const character of Array.from(cleaned)) {
+    if (new TextEncoder().encode(chunk + character).length > 42 && chunk) {
+      chunks.push(chunk);
+      chunk = character;
+    } else {
+      chunk += character;
+    }
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks.map((part) => `=?UTF-8?B?${base64(part)}?=`).join('\r\n ');
 }
 
 function wrapBase64(value: string) {
@@ -36,7 +59,8 @@ export async function POST(request: Request) {
     text?: string;
     inlineImage?: InlineImage;
   };
-  if (!to || !subject || !html) return Response.json({ error: 'Recipient, subject and HTML content are required.' }, { status: 400 });
+  if (!to?.trim() || !subject?.trim() || !html) return Response.json({ error: 'Recipient, subject and HTML content are required.' }, { status: 400 });
+  if (subject.trim().length > 200) return Response.json({ error: 'Subject must be 200 characters or fewer.' }, { status: 400 });
 
   const hasInlineImage = Boolean(inlineImage?.data && inlineImage.mimeType && inlineImage.filename && inlineImage.cid);
   if (hasInlineImage) {
@@ -67,7 +91,7 @@ export async function POST(request: Request) {
     const cid = cleanHeader(inlineImage!.cid!);
     mime = [
       `To: ${cleanHeader(to)}`,
-      `Subject: ${cleanHeader(subject)}`,
+      `Subject: ${encodeMimeHeader(subject)}`,
       'MIME-Version: 1.0',
       `Content-Type: multipart/related; boundary="${relatedBoundary}"`,
       '',
@@ -88,7 +112,7 @@ export async function POST(request: Request) {
   } else {
     mime = [
       `To: ${cleanHeader(to)}`,
-      `Subject: ${cleanHeader(subject)}`,
+      `Subject: ${encodeMimeHeader(subject)}`,
       'MIME-Version: 1.0',
       `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
       '',
