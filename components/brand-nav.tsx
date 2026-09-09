@@ -7,7 +7,7 @@ const links = [
   { id: 'generator', href: '/', label: 'Generator' },
   { id: 'history', href: '/history', label: 'History' },
   { id: 'products', href: '/products', label: 'Products' },
-  { id: 'tour', href: '/ui-tour', label: 'UI Tour' },
+  { id: 'tour', href: '/ui-tour', label: 'UI Guide' },
 ] as const;
 
 export function BrandNav({ active }: BrandNavProps) {

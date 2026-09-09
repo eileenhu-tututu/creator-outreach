@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { defaultProducts, rankProducts, type Product, type ProductMatch } from '@/lib/products';
 import { emailPlaceholders, renderEmailTemplate, starterEmailCss, starterEmailHtml } from '@/lib/email-template';
 import { BrandNav } from '@/components/brand-nav';
+import { OutreachStory } from '@/components/outreach-story';
 
 const creatorImages = [
   'https://images.unsplash.com/photo-1620396748669-46bd3128ccce?w=720&h=1280&fit=crop&auto=format',
@@ -319,6 +320,7 @@ export default function Home() {
             <article className={`showcase-phone phone-lilac ${activeShowcase === 2 ? 'is-active' : ''}`}><div className="phone-bar"><span>9:41</span><span>● ●</span></div><div className="phone-progress"><i style={{ width: '100%' }} /></div><p className="screen-kicker">OUTREACH · 03</p><div className="message-bubble"><p className="screen-note">SUBJECT</p><p className="mt-1 font-bold">A rainy-day collab idea ☔</p></div><div className="mt-3 rounded-[18px] bg-white p-4 text-xs leading-5 text-[#27322d]/70">Your Seattle rain moment got us. This jacket feels genuinely aligned with your audience…</div><button type="button" onClick={() => document.querySelector('#results')?.scrollIntoView({ behavior: 'smooth' })} className="mini-send">Review message <Send className="size-3.5" /></button><div className="screen-feedback">💬 Ready to send!</div></article>
           </div><div className="showcase-dots">{['Creator scan','Product match','Outreach ready'].map((label, index) => <button type="button" key={label} onClick={() => setActiveShowcase(index)} aria-label={`Show ${label}`} aria-pressed={activeShowcase === index} className={activeShowcase === index ? 'is-active' : ''}><span>{String(index + 1).padStart(2, '0')}</span>{label}</button>)}</div></div>
         </div>
+        <OutreachStory />
         <div className="process-rail"><a href="#generator"><span>01</span><strong>Understand</strong><small>Recent creator signals</small></a><i>→</i><a href="#product-match"><span>02</span><strong>Match</strong><small>Best product first</small></a><i>→</i><a href="#results"><span>03</span><strong>Write + send</strong><small>Editable HTML email</small></a></div>
       </section>
 
