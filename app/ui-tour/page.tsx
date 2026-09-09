@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { MouseEvent } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ArrowRight, Check, Mail, PackageCheck, Play, ScanSearch, Sparkles, WandSparkles } from 'lucide-react';
@@ -48,6 +49,10 @@ export default function UiTourPage() {
   }, []);
 
   const selectStep = (index: number) => setActiveStep(index);
+  const openGenerator = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    window.location.assign('/#generator');
+  };
 
   return (
     <main className="app-shell min-h-screen text-foreground">
@@ -60,7 +65,7 @@ export default function UiTourPage() {
           </div>
           <div className="tour-intro-copy">
             <p>Four connected moments turn recent creator content into outreach that actually sounds personal.</p>
-            <Link href="/#generator" className="tour-cta">Try the workflow <ArrowRight className="size-4" /></Link>
+            <Link href="/#generator" prefetch={false} onClick={openGenerator} className="tour-cta">Try the workflow <ArrowRight className="size-4" /></Link>
           </div>
         </div>
 
@@ -115,7 +120,7 @@ export default function UiTourPage() {
           <article className="story-card story-coral"><span><PackageCheck /></span><p className="story-number">02 / MATCH</p><h3>Choose product before copy.</h3><p>The best-fit item rises to the top with a score and an explainable reason.</p><div className="story-score"><b>94</b><span>% match</span></div></article>
           <article className="story-card story-lilac"><span><WandSparkles /></span><p className="story-number">03 / MESSAGE</p><h3>Make every send your own.</h3><p>Edit the subject, text, image placement, CTA, HTML and CSS before Gmail sends.</p><div className="story-reactions"><i>✨</i><i>👍</i><i>💬</i></div></article>
         </div>
-        <div className="tour-closing"><div><Sparkles className="size-5" /><strong>Ready when the context is.</strong><span>Collect → match → personalize → review → send.</span></div><Link href="/#generator">Open Generator <ArrowRight className="size-4" /></Link></div>
+        <div className="tour-closing"><div><Sparkles className="size-5" /><strong>Ready when the context is.</strong><span>Collect → match → personalize → review → send.</span></div><Link href="/#generator" prefetch={false} onClick={openGenerator}>Open Generator <ArrowRight className="size-4" /></Link></div>
       </section>
     </main>
   );
