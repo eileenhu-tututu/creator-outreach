@@ -1,7 +1,7 @@
 'use client';
 
+/* oxlint-disable next/no-img-element -- Direct image elements avoid Vinext's duplicated next/image client runtime. */
 import { useEffect, useState } from 'react';
-import Image from 'next/image';
 import { Check, Mail, Send, Sparkles } from 'lucide-react';
 
 const creatorImage = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&h=760&fit=crop&auto=format';
@@ -37,20 +37,20 @@ export function OutreachStory() {
         </svg>
 
         <button type="button" onClick={() => setActive(0)} className={`story-person story-creator ${active === 0 ? 'is-active' : ''}`} aria-pressed={active === 0}>
-          <span className="person-image"><Image unoptimized src={creatorImage} alt="Creator Rachel" width={600} height={760} /></span>
+          <span className="person-image"><img src={creatorImage} alt="Creator Rachel" /></span>
           <span className="person-copy"><small>CREATOR · SEATTLE</small><strong>@rainydayrachel</strong><span>“Waterproof and cute?”</span></span>
           <i aria-hidden="true">👀</i>
         </button>
 
         <button type="button" onClick={() => setActive(1)} className={`story-person story-sender ${active === 1 ? 'is-active' : ''}`} aria-pressed={active === 1}>
-          <span className="sender-avatar"><Image unoptimized src={senderImage} alt="BD sender Mia" width={420} height={420} /></span>
+          <span className="sender-avatar"><img src={senderImage} alt="BD sender Mia" /></span>
           <span className="person-copy"><small>BD MANAGER</small><strong>Mia · Northstar</strong><span><Check className="size-3" /> CloudLayer · 94%</span></span>
           <i aria-hidden="true">🎯</i>
         </button>
 
         <button type="button" onClick={() => setActive(2)} className={`story-email ${active === 2 ? 'is-active' : ''}`} aria-pressed={active === 2}>
           <span className="email-window-bar"><span><b /><b /><b /></span><Mail className="size-4" /></span>
-          <span className="email-from"><Image unoptimized src={senderImage} alt="Mia" width={420} height={420} /><span><strong>Mia at Northstar</strong><small>to Rachel · just now</small></span></span>
+          <span className="email-from"><img src={senderImage} alt="Mia" /><span><strong>Mia at Northstar</strong><small>to Rachel · just now</small></span></span>
           <span className="email-subject">Rainy-day style, made lighter ☔</span>
           <span className="email-copy">Your Seattle rain moment got us. We found a product that genuinely fits your everyday style…</span>
           <span className="email-cta">View creator offer <Send className="size-3" /></span>
