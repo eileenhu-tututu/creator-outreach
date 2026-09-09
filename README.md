@@ -106,7 +106,7 @@ HTML/CSS 编辑、预览与 Gmail 发送
 | UI | Tailwind CSS · Base UI / shadcn · Lucide Icons |
 | 本地状态 | `localStorage` |
 | 外部集成 | YouTube Data API · Supadata · Gmail API |
-| 部署运行时 | OpenAI Sites · Cloudflare Workers |
+| 部署运行时 | OpenAI Sites / Cloudflare Workers · Vercel / Nitro |
 | 工程质量 | npm lockfile · oxlint · oxfmt |
 
 ## 快速开始
@@ -132,7 +132,8 @@ npm run dev
 
 ```bash
 npm run dev       # 本地开发
-npm run build     # 生产构建
+npm run build     # Sites / Cloudflare 生产构建
+npm run build:vercel # Vercel 生产构建
 npm run lint      # 代码检查
 npm run format    # 代码格式化
 ```
