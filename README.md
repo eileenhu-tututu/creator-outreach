@@ -161,6 +161,32 @@ SITE_URL=http://localhost:3000
 > [!IMPORTANT]
 > `.env.local` 已被 Git 忽略。不要把 API Key、OAuth Secret 或访问令牌提交到仓库；公开演示前请使用受限密钥并轮换曾经暴露的凭据。
 
+## 部署到 Vercel
+
+仓库已包含 `vercel.json`，从 GitHub 导入项目后保留以下设置即可：
+
+| Vercel 设置 | 值 |
+| --- | --- |
+| Framework Preset | `Vite` |
+| Root Directory | `./` |
+| Install Command | `npm ci` |
+| Build Command | `npm run build:vercel` |
+| Output Directory | 留空 |
+
+在 Vercel 的 **Settings → Environment Variables** 中添加上述 5 个变量，并将生产环境的 `SITE_URL` 设为正式域名，例如：
+
+```dotenv
+SITE_URL=https://creator-outreach-seven.vercel.app
+```
+
+Gmail OAuth 客户端还需要在 Google Cloud 中加入完全一致的 Authorized redirect URI：
+
+```text
+https://creator-outreach-seven.vercel.app/api/gmail/callback
+```
+
+推送到 GitHub 的 `main` 分支后，Vercel 会自动构建并更新正式站点。
+
 ## 项目结构
 
 ```text
