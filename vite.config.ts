@@ -1,5 +1,6 @@
 import { sites } from '@openai/sites-vite-plugin';
-import tailwindcss from '@tailwindcss/postcss';
+import tailwindcss from '@tailwindcss/vite';
+import { nitro } from 'nitro/vite';
 import vinext from 'vinext';
 import { defineConfig } from 'vite';
 import hostingConfig from './.openai/hosting.json';
@@ -41,15 +42,27 @@ export default defineConfig(async () => {
   process.env.WRANGLER_LOG_PATH ??= '.wrangler/logs';
   process.env.MINIFLARE_REGISTRY_PATH ??= '.wrangler/registry';
 
+  // Vinext uses Nitro's Vercel preset for full-stack deployments outside the
+  // native Cloudflare Workers target. Keep the existing Sites/Workers build
+  // untouched for local development and the current hosted site.
+  const isVercelBuild =
+    process.env.VERCEL === '1' || process.env.NITRO_PRESET === 'vercel';
+
+  if (isVercelBuild) {
+    return {
+      plugins: [tailwindcss(), vinext(), nitro()],
+    };
+  }
+
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
-    css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      tailwindcss(),
       vinext(),
       sites(),
       cloudflare({

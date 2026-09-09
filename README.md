@@ -157,6 +157,9 @@ SITE_URL=http://localhost:3000
 | `GOOGLE_CLIENT_SECRET` | Gmail OAuth 换取令牌 | 邮件发送时需要 |
 | `SITE_URL` | OAuth 回调所使用的网站地址 | Gmail 连接时需要 |
 
+> [!IMPORTANT]
+> `.env.local` 已被 Git 忽略。不要把 API Key、OAuth Secret 或访问令牌提交到仓库；公开演示前请使用受限密钥并轮换曾经暴露的凭据。
+
 ## 项目结构
 
 ```text
@@ -193,5 +196,11 @@ creator-outreach/
 - 使用 Embedding + Reranker 提升大产品库中的召回与排序质量
 - 建立“生成版本 → 是否发送 → 是否回复”的反馈闭环，验证匹配度与回复率关系
 - 增加批量任务、团队模板、CRM 导出与权限管理
+
+---
+
+<div align="center">
+
+**好的建联不是写得更像 AI，而是让红人感觉：你真的看过。**
 
 </div>
