@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { defaultProducts, rankProducts, type Product, type ProductMatch } from '@/lib/products';
 import { emailPlaceholders, renderEmailTemplate, starterEmailCss, starterEmailHtml } from '@/lib/email-template';
+import { BrandNav } from '@/components/brand-nav';
 
 const creatorImages = [
   'https://images.unsplash.com/photo-1620396748669-46bd3128ccce?w=720&h=1280&fit=crop&auto=format',
@@ -72,6 +73,8 @@ export default function Home() {
   const [customEmailHtml, setCustomEmailHtml] = useState(starterEmailHtml);
   const [customEmailCss, setCustomEmailCss] = useState(starterEmailCss);
   const [templateMessage, setTemplateMessage] = useState('');
+  const [activeShowcase, setActiveShowcase] = useState(0);
+  const [celebration, setCelebration] = useState<'match' | 'message' | null>(null);
   const [gmailStatus, setGmailStatus] = useState({ connected: false, configured: false });
   const [sending, setSending] = useState(false);
   const [sendMessage, setSendMessage] = useState('');
@@ -138,6 +141,12 @@ export default function Home() {
     refreshGmailStatus();
     window.addEventListener('message', handleOauthMessage);
     return () => window.removeEventListener('message', handleOauthMessage);
+  }, []);
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timer = window.setInterval(() => setActiveShowcase((current) => (current + 1) % 3), 3800);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -214,6 +223,8 @@ export default function Home() {
       setMatchSignature(creatorSignature);
       if (ranked[0]) chooseProduct(ranked[0]);
       setMatchingProducts(false);
+      setCelebration('match');
+      window.setTimeout(() => setCelebration(null), 1800);
     }, 550);
   };
 
@@ -222,6 +233,8 @@ export default function Home() {
     window.setTimeout(() => {
       const nextResult = buildResult(tone);
       setResult(nextResult); setGenerating(false);
+      setCelebration('message');
+      window.setTimeout(() => setCelebration(null), 1800);
       const stored = JSON.parse(window.localStorage.getItem('creator-outreach-history') || '[]') as unknown[];
       window.localStorage.setItem('creator-outreach-history', JSON.stringify([{ id: crypto.randomUUID(), createdAt: new Date().toISOString(), username: cleanHandle(username), product, ...nextResult }, ...stored].slice(0, 50)));
       window.setTimeout(() => document.querySelector('#results')?.scrollIntoView({ behavior: 'smooth' }), 40);
@@ -293,21 +306,20 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <nav className="sticky top-0 z-40 border-b border-white/10 bg-[#0f0f0f]/95 backdrop-blur-md">
-        <div className="mx-auto flex h-[70px] max-w-[1440px] items-center justify-between px-5 lg:px-10">
-          <div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-full bg-[#ff5400] text-black"><Sparkles className="size-4" strokeWidth={2.6} /></span><span className="text-[15px] font-bold tracking-[-0.02em]">Creator Outreach</span><Badge className="hidden rounded-full border-white/10 bg-white/8 text-white/55 sm:inline-flex">LOCAL</Badge></div>
-          <div className="hidden items-center gap-1 rounded-full bg-white/6 p-1 md:flex"><a href="/" className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black">Generator</a><a href="/history" className="rounded-full px-4 py-2 text-sm font-medium text-white/55 hover:bg-white/8 hover:text-white">History</a><a href="/products" className="rounded-full px-4 py-2 text-sm font-medium text-white/55 hover:bg-white/8 hover:text-white">Products</a></div>
-          <div className="flex items-center gap-2 text-xs text-white/55"><ShieldCheck className="size-4 text-[#ff5400]" /><span className="hidden sm:inline">100% local processing</span></div>
-        </div>
-      </nav>
+    <main className="app-shell min-h-screen bg-background text-foreground">
+      <BrandNav active="generator" />
+      {celebration && <output className="celebration-toast" aria-live="polite"><span aria-hidden="true">{celebration === 'match' ? '🎯' : '💌'}</span><div><strong>{celebration === 'match' ? 'Best match found!' : 'Personalized message ready!'}</strong><small>{celebration === 'match' ? 'Review the ranked products below.' : 'Edit, preview, or send when it feels right.'}</small></div><span aria-hidden="true">✨</span></output>}
 
-      <section className="mx-auto max-w-[1440px] px-5 pb-10 pt-14 lg:px-10 lg:pt-20">
-        <div className="grid items-end gap-10 lg:grid-cols-[1fr_520px]">
-          <div className="max-w-[760px]"><Badge className="mb-6 rounded-full bg-white/9 px-3 py-1 text-white/70">AI-POWERED · FOR TIKTOK SHOP BD</Badge><h1 className="text-[clamp(48px,6.5vw,92px)] font-black leading-[0.96] tracking-[-0.065em]">Turn creator content into outreach that feels <em className="font-serif font-normal text-[#ff5400]">personal.</em></h1><p className="mt-7 max-w-[590px] text-[17px] leading-7 text-white/55">Paste three recent video transcripts. Get a specific, source-backed outreach message in one second—without uploading creator data.</p></div>
-          <div className="relative hidden h-[360px] lg:block" aria-hidden="true">{creatorImages.map((image, index) => <div key={image} className={`absolute bottom-0 w-[190px] overflow-hidden rounded-[24px] border-[5px] border-[#0f0f0f] bg-[#222] ${index === 0 ? 'left-8 -rotate-6' : index === 1 ? 'left-[168px] z-10 rotate-2' : 'right-1 rotate-6'}`}><img src={image} alt="" className="h-[330px] w-full object-cover" /><div className="absolute inset-x-0 bottom-0 bg-black/60 p-4 text-xs font-semibold text-white">@{['coffeeshopfits','rainydayrachel','seattlestyle'][index]}</div></div>)}</div>
+      <section className="mx-auto max-w-[1440px] px-4 pb-8 pt-6 sm:px-5 lg:px-10 lg:pt-10">
+        <div className="hero-studio">
+          <div className="relative z-10 max-w-[670px]"><div className="mb-6 flex flex-wrap items-center gap-2"><Badge className="rounded-full bg-[#27322d] px-3 py-1.5 text-[#eef5eb]">TIKTOK SHOP · CREATOR BD</Badge><span className="micro-note">01 SIGNALS · 02 MATCH · 03 OUTREACH</span></div><h1 className="hero-title">Turn creator signals into a message that feels <span>made for them.</span></h1><p className="mt-6 max-w-[590px] text-[17px] leading-7 text-[#27322d]/65">Collect recent scripts, match the right product, and build a send-ready email—with every creator detail traceable.</p><div className="mt-8 flex flex-wrap items-center gap-3"><Button onClick={() => document.querySelector('#generator')?.scrollIntoView({ behavior: 'smooth' })} className="h-12 rounded-full bg-[#27322d] px-6 font-bold text-white hover:bg-[#39463f]">Start creator scan <ArrowDown className="ml-1 size-4" /></Button><span className="micro-note">Private by default · editable at every step</span></div></div>
+          <div className="showcase-wrap" aria-label="Product workflow preview"><span className="float-emoji emoji-one" aria-hidden="true">✨</span><span className="float-emoji emoji-two" aria-hidden="true">🫶</span><span className="float-emoji emoji-three" aria-hidden="true">💌</span><div className="showcase-stage">
+            <article className={`showcase-phone phone-sage ${activeShowcase === 0 ? 'is-active' : ''}`}><div className="phone-bar"><span>9:41</span><span>● ●</span></div><div className="phone-progress"><i style={{ width: '33%' }} /></div><p className="screen-kicker">CREATOR SCAN · 01</p><div className="flex items-center gap-3"><img src={creatorImages[1]} alt="Creator profile" className="size-14 rounded-[18px] object-cover" /><div><h3>@rainydayrachel</h3><p className="screen-note">3 scripts ready · lifestyle</p></div></div><div className="mt-5 rounded-[18px] bg-white/75 p-4"><p className="screen-note">STRONGEST SIGNAL</p><p className="mt-2 text-sm font-bold leading-5">“Waterproof and cute at the same time?”</p></div><div className="screen-feedback">🥳 Context found!</div></article>
+            <article className={`showcase-phone phone-coral ${activeShowcase === 1 ? 'is-active' : ''}`}><div className="phone-bar"><span>9:41</span><span>● ●</span></div><div className="phone-progress"><i style={{ width: '66%' }} /></div><p className="screen-kicker">PRODUCT MATCH · 02</p><div className="score-orb">94<span>%</span></div><h3 className="text-center">CloudLayer Jacket</h3><p className="mt-1 text-center text-xs text-[#27322d]/55">Best fit across your catalog</p><div className="mt-5 flex flex-wrap justify-center gap-1.5"><span className="screen-chip">Waterproof</span><span className="screen-chip">Cute fit</span><span className="screen-chip">Seattle</span></div><div className="screen-feedback">🎯 Match locked!</div></article>
+            <article className={`showcase-phone phone-lilac ${activeShowcase === 2 ? 'is-active' : ''}`}><div className="phone-bar"><span>9:41</span><span>● ●</span></div><div className="phone-progress"><i style={{ width: '100%' }} /></div><p className="screen-kicker">OUTREACH · 03</p><div className="message-bubble"><p className="screen-note">SUBJECT</p><p className="mt-1 font-bold">A rainy-day collab idea ☔</p></div><div className="mt-3 rounded-[18px] bg-white p-4 text-xs leading-5 text-[#27322d]/70">Your Seattle rain moment got us. This jacket feels genuinely aligned with your audience…</div><button type="button" onClick={() => document.querySelector('#results')?.scrollIntoView({ behavior: 'smooth' })} className="mini-send">Review message <Send className="size-3.5" /></button><div className="screen-feedback">💬 Ready to send!</div></article>
+          </div><div className="showcase-dots">{['Creator scan','Product match','Outreach ready'].map((label, index) => <button type="button" key={label} onClick={() => setActiveShowcase(index)} aria-label={`Show ${label}`} aria-pressed={activeShowcase === index} className={activeShowcase === index ? 'is-active' : ''}><span>{String(index + 1).padStart(2, '0')}</span>{label}</button>)}</div></div>
         </div>
-        <div className="mt-12 flex items-center gap-3"><Button onClick={() => document.querySelector('#generator')?.scrollIntoView({ behavior: 'smooth' })} className="h-12 rounded-full bg-[#ff5400] px-6 font-bold text-black hover:bg-[#ff6a1a]">Create outreach <ArrowDown className="ml-1 size-4" /></Button><span className="text-xs text-white/35">No API key · No account</span></div>
+        <div className="process-rail"><a href="#generator"><span>01</span><strong>Understand</strong><small>Recent creator signals</small></a><i>→</i><a href="#product-match"><span>02</span><strong>Match</strong><small>Best product first</small></a><i>→</i><a href="#results"><span>03</span><strong>Write + send</strong><small>Editable HTML email</small></a></div>
       </section>
 
       <section id="generator" className="mx-auto max-w-[1440px] scroll-mt-24 px-5 py-10 lg:px-10">
