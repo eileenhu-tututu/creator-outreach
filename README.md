@@ -192,6 +192,7 @@ creator-outreach/
 
 下一阶段重点：
 
+- 引入Youtube Shorts,tiktok, ins feeds等多渠道内容采集
 - 引入结构化 LLM 提取，识别人设、语气、近期事件与负面约束
 - 使用 Embedding + Reranker 提升大产品库中的召回与排序质量
 - 建立“生成版本 → 是否发送 → 是否回复”的反馈闭环，验证匹配度与回复率关系
