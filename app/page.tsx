@@ -558,22 +558,20 @@ export default function Home() {
 
   const toggleVideoSelection = (video: CollectedVideo) => {
     if (!videoScript(video)) return;
-    setSelectedVideoIds((current) => {
-      const next = current.includes(video.id)
-        ? current.filter((id) => id !== video.id)
-        : [...current, video.id].slice(0, 8);
-      setTranscripts(
-        next
-          .map((id) =>
-            videoScript(
-              collectedVideos.find((candidate) => candidate.id === id) || video,
-            ),
-          )
-          .filter(Boolean),
-      );
-      setActiveVideo(0);
-      return next;
-    });
+    const next = selectedVideoIds.includes(video.id)
+      ? selectedVideoIds.filter((id) => id !== video.id)
+      : [...selectedVideoIds, video.id].slice(0, 8);
+    setSelectedVideoIds(next);
+    setTranscripts(
+      next
+        .map((id) =>
+          videoScript(
+            collectedVideos.find((candidate) => candidate.id === id) || video,
+          ),
+        )
+        .filter(Boolean),
+    );
+    setActiveVideo(0);
   };
 
   const pollTranscript = async (video: CollectedVideo) => {
@@ -1409,28 +1407,75 @@ export default function Home() {
                 ))}
               </div>
             )}
-            <div className="mt-4 rounded-[18px] bg-[#f1f0ed] p-4">
-              <div className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-[.1em] text-black/40">
-                <span>Video {activeVideo + 1} transcript</span>
-                <span>{(transcripts[activeVideo] || '').length} chars</span>
+            <section className="mt-5" aria-labelledby="selected-transcripts">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <p
+                    id="selected-transcripts"
+                    className="text-sm font-black text-black"
+                  >
+                    Selected transcripts
+                  </p>
+                  <p className="mt-1 text-xs text-black/45">
+                    Every selected script appears below and is included in
+                    product matching.
+                  </p>
+                </div>
+                <Badge className="rounded-full bg-[#27322d] text-white">
+                  {filledVideos} script{filledVideos === 1 ? '' : 's'}
+                </Badge>
               </div>
-              <Textarea
-                aria-label={`Video ${activeVideo + 1} transcript`}
-                value={transcripts[activeVideo] || ''}
-                onChange={(e) =>
-                  setTranscripts(
-                    transcripts.map((item, index) =>
-                      index === activeVideo ? e.target.value : item,
-                    ),
-                  )
-                }
-                className="min-h-[108px] resize-none border-0 bg-transparent p-0 text-[15px] leading-6 text-black shadow-none focus-visible:ring-0"
-              />
-              <div className="mt-3 flex items-center gap-2 border-t border-black/8 pt-3 text-[11px] text-black/40">
-                <Upload className="size-3.5" /> Paste transcript or drop a .txt
-                file · matching uses every selected sample
+              <div className="grid gap-3 lg:grid-cols-2">
+                {transcripts.map((script, index) => {
+                  const sourceId = selectedVideoIds[index];
+                  const sourceVideo = sourceId
+                    ? collectedVideos.find((video) => video.id === sourceId)
+                    : undefined;
+                  return (
+                    <article
+                      key={sourceId || `manual-${index}`}
+                      className={`rounded-[18px] border p-4 transition ${activeVideo === index ? 'border-[#ff5400] bg-[#fff7f3]' : 'border-black/8 bg-[#f1f0ed]'}`}
+                    >
+                      <div className="mb-2 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-black uppercase tracking-[.1em] text-black/45">
+                            Script {index + 1}
+                            {sourceVideo
+                              ? ` · ${sourceVideo.platform === 'tiktok' ? 'TikTok' : 'Short'}`
+                              : ' · Manual'}
+                          </p>
+                          {sourceVideo && (
+                            <p className="mt-1 truncate text-xs font-bold text-black/75">
+                              {sourceVideo.title}
+                            </p>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-[10px] font-bold text-black/35">
+                          {script.length} chars
+                        </span>
+                      </div>
+                      <Textarea
+                        aria-label={`Script ${index + 1}${sourceVideo ? ` from ${sourceVideo.title}` : ''}`}
+                        value={script}
+                        onFocus={() => setActiveVideo(index)}
+                        onChange={(event) =>
+                          setTranscripts((current) =>
+                            current.map((item, scriptIndex) =>
+                              scriptIndex === index ? event.target.value : item,
+                            ),
+                          )
+                        }
+                        className="min-h-[150px] resize-y border-0 bg-transparent p-0 text-[15px] leading-6 text-black shadow-none focus-visible:ring-0"
+                      />
+                    </article>
+                  );
+                })}
               </div>
-            </div>
+              <div className="mt-3 flex items-center gap-2 rounded-[14px] bg-[#f1f0ed] px-4 py-3 text-[11px] text-black/40">
+                <Upload className="size-3.5" /> Edit any script here · product
+                matching reads all selected scripts together
+              </div>
+            </section>
           </article>
         </div>
 
