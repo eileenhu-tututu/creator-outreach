@@ -6,7 +6,7 @@
 
 面向美区 TikTok Shop Affiliate BD：从近期视频转录、产品匹配，到个性化 DM / HTML 邮件生成与发送，一条工作流完成。
 
-[🚀 在线体验](https://creator-outreach-bd.whole-sloth-5122.chatgpt.site/) · [🎨 查看 UI 设计规范](https://creator-outreach-bd.whole-sloth-5122.chatgpt.site/ui-tour)
+[🚀 在线体验](https://creator-outreach-seven.vercel.app/) · [🎨 查看 UI 设计规范](https://creator-outreach-seven.vercel.app/ui-tour)
 
 ![Creator Outreach product cover](./public/og.png)
 
@@ -69,7 +69,7 @@ HTML/CSS 编辑、预览与 Gmail 发送
 ## 产品工作流
 
 1. **Collect — 理解红人**  
-   输入 YouTube 频道名称，拉取近 7 天内最新 3 条视频转录；也可以直接粘贴 TikTok、Instagram 或其他来源的脚本。
+   输入 YouTube 频道名称，拉取近 7 天内最新 3 条 Shorts 转录；或粘贴最多 3 条 TikTok 公热视频链接自动转录。其他来源仍可手动粘贴脚本。
 
 2. **Match — 先选对产品**  
    将红人的话题、场景与表达信号和多产品库进行匹配，先输出排序、匹配度、推荐理由和对应原文，再进入文案生成。
@@ -82,7 +82,7 @@ HTML/CSS 编辑、预览与 Gmail 发送
 
 ## 核心功能
 
-- 🔎 **双输入模式**：YouTube 近 7 天自动采集 + 手动 Transcript 兜底
+- 🔎 **多渠道采集**：YouTube Shorts 近 7 天自动采集 + TikTok 公热视频转录 + 手动 Transcript 兜底
 - 🎯 **多产品智能匹配**：先排名，再生成；推荐结果附内容证据与来源
 - ✍️ **定制化建联**：生成 Icebreaker、TikTok / IG DM 和 Email
 - 🧩 **邮件模板系统**：支持 14 个动态占位符、自定义 HTML/CSS、产品图与 CTA
@@ -97,7 +97,7 @@ HTML/CSS 编辑、预览与 Gmail 发送
 
 外部服务只用于两个明确环节：
 
-- YouTube Data API + Supadata：查找频道、近期视频和 Transcript
+- YouTube Data API + Supadata：查找频道、筛选 Shorts，并转录 YouTube / TikTok 公热视频
 - Google OAuth + Gmail API：授权并发送最终 HTML 邮件
 
 | 层级 | 技术 |
@@ -197,7 +197,8 @@ creator-outreach/
 │   ├── history/page.tsx         # 本地建联历史
 │   ├── ui-tour/page.tsx         # UI 设计规范与关键页面展示
 │   └── api/
-│       ├── youtube/route.ts     # 视频与 Transcript 采集
+│       ├── collect/route.ts     # YouTube Shorts / TikTok 统一采集
+│       ├── youtube/route.ts     # 旧版 YouTube 视频采集兼容接口
 │       └── gmail/               # OAuth、状态检查和邮件发送
 ├── components/                  # 导航、互动展示与 UI 组件
 ├── lib/
@@ -219,7 +220,7 @@ creator-outreach/
 
 下一阶段重点：
 
-- 引入Youtube Shorts,tiktok, ins feeds等多渠道内容采集
+- 扩展 Instagram Reels，并在 TikTok 应用审核后增加授权主页同步
 - 引入结构化 LLM 提取，识别人设、语气、近期事件与负面约束
 - 使用 Embedding + Reranker 提升大产品库中的召回与排序质量
 - 建立“生成版本 → 是否发送 → 是否回复”的反馈闭环，验证匹配度与回复率关系
