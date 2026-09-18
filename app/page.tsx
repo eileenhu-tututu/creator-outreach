@@ -50,6 +50,10 @@ import {
   starterEmailCss,
   starterEmailHtml,
 } from '@/lib/email-template';
+import {
+  buildConversationAngles,
+  type ConversationAngle,
+} from '@/lib/conversation-angles';
 import { BrandNav } from '@/components/brand-nav';
 import { OutreachStory } from '@/components/outreach-story';
 
@@ -169,6 +173,11 @@ export default function Home() {
   const [bio, setBio] = useState('Seattle girl · daily fits · chaotic energy');
   const [transcripts, setTranscripts] = useState(initialTranscripts);
   const [activeVideo, setActiveVideo] = useState(0);
+  const [conversationAngles, setConversationAngles] = useState<
+    ConversationAngle[]
+  >([]);
+  const [selectedAngleId, setSelectedAngleId] = useState('');
+  const [angleSignature, setAngleSignature] = useState('');
   const [product, setProduct] = useState('CloudLayer Jacket');
   const [description, setDescription] = useState(
     'A lightweight everyday rain jacket designed to stay cute in bad weather.',
@@ -237,9 +246,25 @@ export default function Home() {
     () => transcripts.filter((item) => item.trim()).length,
     [transcripts],
   );
+  const currentAngleSignature = useMemo(
+    () => JSON.stringify([bio, transcripts]),
+    [bio, transcripts],
+  );
+  const anglesFresh =
+    conversationAngles.length > 0 && angleSignature === currentAngleSignature;
+  const selectedAngle = anglesFresh
+    ? conversationAngles.find((angle) => angle.id === selectedAngleId) || null
+    : null;
   const creatorSignature = useMemo(
-    () => JSON.stringify([username, bio, transcripts, productLibrary]),
-    [username, bio, transcripts, productLibrary],
+    () =>
+      JSON.stringify([
+        username,
+        bio,
+        transcripts,
+        selectedAngleId,
+        productLibrary,
+      ]),
+    [username, bio, transcripts, selectedAngleId, productLibrary],
   );
   const matchesFresh =
     productMatches.length > 0 && matchSignature === creatorSignature;
@@ -434,6 +459,16 @@ export default function Home() {
     setTemplateMessage('Starter template restored.');
   };
 
+  const findConversationAngles = () => {
+    const nextAngles = buildConversationAngles(transcripts, bio);
+    setConversationAngles(nextAngles);
+    setSelectedAngleId('');
+    setAngleSignature(currentAngleSignature);
+    setProductMatches([]);
+    setSelectedProductId(null);
+    setResult(null);
+  };
+
   const buildResult = (
     tone: 'default' | 'shorter' | 'casual' | 'soft' = 'default',
   ): Result => {
@@ -445,26 +480,28 @@ export default function Home() {
     const match = selectedMatch || productMatches[0];
     const feature =
       match?.matchedFeatures[0] || features[0] || 'everyday design';
-    const evidence =
-      match?.evidence ||
-      transcripts.find((item) => item.trim())?.split(/(?<=[.!?])\s+/)[0] ||
-      bio;
-    const evidenceLine = evidence.replace(/[“”"]/g, '').slice(0, 135);
+    const angle = selectedAngle || {
+      title: 'Their creator perspective',
+      dmLead: 'the personal perspective you bring to your content',
+      summary:
+        'Acknowledge the creator’s point of view without repeating their transcript.',
+      whyItWorks: 'Keeps the opener personal without forcing a quote.',
+    };
     const sample = freeSample
       ? 'We’d love to send you one—no strings attached.'
       : 'We’d love to explore a collaboration.';
     const affiliate = commission
       ? ` It also comes with ${commission} affiliate commission.`
       : '';
-    let dm = `Your “${evidenceLine}” moment really stood out. We thought of ${product}—the ${feature.toLowerCase()} angle feels genuinely aligned with your content. ${sample}${affiliate}`;
-    let email = `Hi ${name},\n\nI loved your recent video—the “${evidenceLine}” moment felt especially true to your voice.\n\nAfter looking across our product lineup, ${product} came out as the strongest match. Its ${features.slice(0, 3).join(', ').toLowerCase()} features connect naturally with what your audience already sees from you. ${sample}${affiliate}\n\nWould you be open to taking a look? Full creative control, always.\n\n— Partnerships team`;
+    let dm = `I really like ${angle.dmLead}. ${product} came to mind because the ${feature.toLowerCase()} detail feels like a natural fit for the content you already make. ${sample}${affiliate} Would you be open to checking it out?`;
+    let email = `Hi ${name},\n\nI’ve been enjoying ${angle.dmLead}. It feels thoughtful and genuinely useful rather than overly produced.\n\nAfter looking across our product lineup, ${product} came out as the strongest match. Its ${features.slice(0, 3).join(', ').toLowerCase()} features could fit naturally into the content you already make. ${sample}${affiliate}\n\nWould you be open to taking a look? Full creative control, always.\n\n— Partnerships team`;
     if (tone === 'shorter') {
-      dm = `Your “${evidenceLine}” moment caught our eye. ${product} feels like a strong fit—especially the ${feature.toLowerCase()} angle. Can we send you one?`;
-      email = `Hi ${name},\n\nYour “${evidenceLine}” moment caught our eye. ${product} ranked as our strongest fit for your content, especially its ${features.slice(0, 2).join(' and ').toLowerCase()} features. ${sample}\n\nOpen to taking a look?\n\n— Partnerships team`;
+      dm = `Love ${angle.dmLead}. ${product} feels like a natural fit, especially the ${feature.toLowerCase()} detail. Can we send you one?`;
+      email = `Hi ${name},\n\nI’ve been enjoying ${angle.dmLead}. ${product} ranked as our strongest fit, especially its ${features.slice(0, 2).join(' and ').toLowerCase()} features. ${sample}\n\nOpen to taking a look?\n\n— Partnerships team`;
     } else if (tone === 'casual') {
-      dm = `Okay, your “${evidenceLine}” moment got us 😭 ${product} was the clear match from our lineup—the ${feature.toLowerCase()} detail feels very you. Want us to send one your way?`;
+      dm = `Okay, we really like ${angle.dmLead} 🫶 ${product} was the clear match from our lineup—the ${feature.toLowerCase()} detail feels very you. Want us to send one your way?`;
     } else if (tone === 'soft') {
-      dm = `Your recent content made us think of ${product}. The ${feature.toLowerCase()} detail might be a natural fit for your audience. Happy to share more if it feels relevant—no pressure at all.`;
+      dm = `I’ve been enjoying ${angle.dmLead}. ${product} might be a natural fit, especially the ${feature.toLowerCase()} detail. Happy to share more if it feels relevant—no pressure at all.`;
       email = email.replace(
         'Would you be open to taking a look?',
         'If it feels like a fit, we’d be happy to share more—no pressure at all.',
@@ -472,9 +509,9 @@ export default function Home() {
     }
     return {
       score: Math.max(1, Math.round((match?.score || 70) / 10)),
-      hook: evidenceLine || 'Your latest creator moment',
-      source: match?.source || 'Video 1',
-      evidence,
+      hook: angle.title,
+      source: 'Confirmed conversation angle',
+      evidence: angle.summary,
       reason:
         match?.reason ||
         `${feature} creates a natural product bridge from the creator’s recent content.`,
@@ -500,10 +537,14 @@ export default function Home() {
   };
 
   const matchProducts = () => {
-    if (!filledVideos || !productLibrary.length) return;
+    if (!filledVideos || !productLibrary.length || !selectedAngle) return;
     setMatchingProducts(true);
     window.setTimeout(() => {
-      const ranked = rankProducts(productLibrary, transcripts, bio);
+      const ranked = rankProducts(
+        productLibrary,
+        [...transcripts, selectedAngle.summary, selectedAngle.dmLead],
+        bio,
+      );
       setProductMatches(ranked);
       setMatchSignature(creatorSignature);
       if (ranked[0]) chooseProduct(ranked[0]);
@@ -1476,6 +1517,103 @@ export default function Home() {
                 matching reads all selected scripts together
               </div>
             </section>
+            <section
+              className="mt-6 rounded-[22px] bg-[#27322d] p-5 text-white sm:p-6"
+              aria-labelledby="conversation-angles"
+            >
+              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                <div className="flex items-start gap-3">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-[15px] bg-[#ff7768] text-[#27322d]">
+                    <MessageCircle className="size-5" />
+                  </span>
+                  <div>
+                    <p className="eyebrow text-white/45">1.5 / TALKING POINT</p>
+                    <h3 id="conversation-angles" className="text-xl font-black">
+                      Choose what to talk about
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-sm leading-6 text-white/55">
+                      Turn the selected scripts into natural conversation
+                      angles. Pick one before matching products—the final DM
+                      will use your choice, never copy the transcript.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={findConversationAngles}
+                  disabled={!filledVideos}
+                  className="h-10 shrink-0 rounded-full bg-white px-5 font-black text-[#27322d] hover:bg-[#eaf4e8]"
+                >
+                  <Sparkles />
+                  {conversationAngles.length
+                    ? 'Refresh talking points'
+                    : 'Find talking points'}
+                </Button>
+              </div>
+
+              {conversationAngles.length ? (
+                <div className="mt-5">
+                  {!anglesFresh && (
+                    <p className="mb-3 rounded-[12px] bg-[#ff7768]/20 px-3 py-2 text-xs font-semibold text-[#ffd8d3]">
+                      Scripts changed. Refresh the talking points before product
+                      matching.
+                    </p>
+                  )}
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {conversationAngles.map((angle) => {
+                      const selected =
+                        anglesFresh && selectedAngleId === angle.id;
+                      return (
+                        <button
+                          key={angle.id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => {
+                            if (!anglesFresh) return;
+                            setSelectedAngleId(angle.id);
+                            setProductMatches([]);
+                            setSelectedProductId(null);
+                            setResult(null);
+                          }}
+                          className={`rounded-[18px] border p-4 text-left transition ${selected ? 'border-[#ff7768] bg-[#ff7768] text-[#27322d]' : 'border-white/12 bg-white/6 text-white hover:border-white/30 hover:bg-white/10'} ${anglesFresh ? '' : 'cursor-not-allowed opacity-55'}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-black">{angle.title}</p>
+                              <p
+                                className={`mt-1 text-xs leading-5 ${selected ? 'text-[#27322d]/65' : 'text-white/55'}`}
+                              >
+                                {angle.summary}
+                              </p>
+                            </div>
+                            <span
+                              className={`grid size-6 shrink-0 place-items-center rounded-full border ${selected ? 'border-[#27322d] bg-[#27322d] text-white' : 'border-white/25'}`}
+                            >
+                              {selected ? <Check className="size-3.5" /> : null}
+                            </span>
+                          </div>
+                          <p
+                            className={`mt-3 border-t pt-3 text-[11px] leading-5 ${selected ? 'border-[#27322d]/15 text-[#27322d]/60' : 'border-white/10 text-white/40'}`}
+                          >
+                            Why it works: {angle.whyItWorks}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-3 text-xs text-white/45">
+                    {selectedAngle
+                      ? `Confirmed: ${selectedAngle.title}`
+                      : 'Select one talking point to continue to product matching.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-5 rounded-[16px] border border-dashed border-white/15 px-4 py-5 text-center text-sm text-white/45">
+                  Review the scripts above, then find 3–4 paraphrased topics
+                  that would feel natural in a DM.
+                </div>
+              )}
+            </section>
           </article>
         </div>
 
@@ -1509,10 +1647,14 @@ export default function Home() {
                   </h3>
                   <p className="mt-1 max-w-2xl text-sm leading-6 text-[#27322d]/60">
                     Recent scripts and bio are compared with every product’s
-                    description and selling points. The strongest match is
-                    selected automatically, and you can switch to another
-                    candidate before writing.
+                    description and selling points, guided by the conversation
+                    angle you confirmed above.
                   </p>
+                  {selectedAngle && (
+                    <Badge className="mt-3 rounded-full bg-[#ddd0ff] text-[#27322d]">
+                      Talking point · {selectedAngle.title}
+                    </Badge>
+                  )}
                 </div>
               </div>
               <Button
@@ -1520,6 +1662,7 @@ export default function Home() {
                 disabled={
                   matchingProducts ||
                   filledVideos === 0 ||
+                  !selectedAngle ||
                   productLibrary.length === 0
                 }
                 className="match-primary-action h-12 shrink-0 rounded-full px-6 font-black"
@@ -1551,8 +1694,9 @@ export default function Home() {
                 <div>
                   <p className="font-bold">No match has been run yet.</p>
                   <p className="mt-1 text-sm text-[#27322d]/50">
-                    Add the creator’s scripts, then compare all{' '}
-                    {productLibrary.length} products.
+                    {selectedAngle
+                      ? `Your “${selectedAngle.title}” talking point is ready. Compare all ${productLibrary.length} products next.`
+                      : 'Choose a talking point above before matching products.'}
                   </p>
                 </div>
               </div>
@@ -1637,14 +1781,18 @@ export default function Home() {
                   : 'Match a product before writing.'}
               </strong>
               {selectedMatch && matchesFresh
-                ? selectedMatch.reason
-                : 'The outreach will use only the selected product and traceable creator evidence.'}
+                ? `${selectedAngle?.title}: ${selectedMatch.reason}`
+                : 'Confirm a talking point, then match a product before writing.'}
             </span>
           </div>
           <Button
             onClick={() => generate()}
             disabled={
-              generating || !username.trim() || !matchesFresh || !selectedMatch
+              generating ||
+              !username.trim() ||
+              !selectedAngle ||
+              !matchesFresh ||
+              !selectedMatch
             }
             className="h-14 w-full rounded-full bg-[#ff5400] px-8 text-base font-black text-black hover:bg-[#ff6a1a] sm:w-auto"
           >
@@ -1695,11 +1843,9 @@ export default function Home() {
                   className="h-28 w-24 rounded-[16px] object-cover"
                 />
                 <div>
-                  <p className="field-label">
-                    Creator evidence · {result.source}
-                  </p>
+                  <p className="field-label">Confirmed conversation angle</p>
                   <p className="mt-3 text-[17px] font-bold leading-6">
-                    “{result.evidence}”
+                    {result.evidence}
                   </p>
                 </div>
               </div>
@@ -1793,17 +1939,17 @@ export default function Home() {
                 <div className="mb-7 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Sparkles className="size-4" />
-                    <h3 className="font-black">Best hook</h3>
+                    <h3 className="font-black">Selected talking point</h3>
                   </div>
                   <Badge className="rounded-full bg-black text-white">
                     LOW RISK
                   </Badge>
                 </div>
                 <p className="text-[clamp(30px,4vw,48px)] font-black leading-[1.02] tracking-[-.05em]">
-                  “{result.hook}”
+                  {result.hook}
                 </p>
                 <div className="mt-8 flex items-center justify-between border-t border-black/15 pt-4 text-xs font-bold">
-                  <span>Source verified</span>
+                  <span>Human confirmed</span>
                   <span className="flex items-center gap-1">
                     <Clipboard className="size-3.5" /> {result.source}
                   </span>
