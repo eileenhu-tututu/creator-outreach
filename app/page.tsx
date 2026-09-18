@@ -17,6 +17,7 @@ import {
   MessageCircle,
   PackageSearch,
   RefreshCw,
+  ScanText,
   Send,
   ShieldCheck,
   Sparkles,
@@ -26,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -92,6 +94,16 @@ type CollectedVideo = {
   url: string;
   transcript?: string;
   status: 'ready' | 'processing' | 'failed';
+  jobId?: string;
+  description?: string;
+  qualityScore: number;
+  qualityLabel: 'strong' | 'review' | 'skip';
+  qualityReason: string;
+  visualText?: string[];
+  creatorSignals?: string[];
+  contentType?: string;
+  visualStatus?: 'idle' | 'processing' | 'ready' | 'failed';
+  visualJobId?: string;
 };
 const cleanHandle = (value: string) =>
   value.trim().replace(/^@/, '') || 'creator';
@@ -115,6 +127,41 @@ const safeHttpUrl = (value: string) => {
   } catch {
     return '';
   }
+};
+
+const videoScript = (video: CollectedVideo) => {
+  const spoken = video.transcript?.trim();
+  const visual = video.visualText?.filter(Boolean) || [];
+  const signals = video.creatorSignals?.filter(Boolean) || [];
+  return [
+    spoken ? `[Spoken transcript]\n${spoken}` : '',
+    visual.length ? `[On-screen text]\n${visual.join('\n')}` : '',
+    signals.length ? `[Visual creator signals]\n${signals.join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+};
+
+const transcriptQuality = (video: CollectedVideo, transcript: string) => {
+  const words = transcript.split(/\s+/).filter(Boolean).length;
+  const base = video.qualityScore || 20;
+  const score = Math.min(
+    100,
+    Math.max(base, words >= 80 ? 72 : words >= 35 ? 58 : words >= 15 ? 42 : 24),
+  );
+  return {
+    qualityScore: score,
+    qualityLabel:
+      score >= 65
+        ? ('strong' as const)
+        : score >= 38
+          ? ('review' as const)
+          : ('skip' as const),
+    qualityReason:
+      words >= 35
+        ? 'Transcript contains enough spoken context for matching.'
+        : 'Limited spoken context. Review it or read the on-screen text.',
+  };
 };
 
 export default function Home() {
@@ -149,6 +196,8 @@ export default function Home() {
     useState<CollectionSource>('youtube-shorts');
   const [collectionInput, setCollectionInput] = useState('');
   const [collectedVideos, setCollectedVideos] = useState<CollectedVideo[]>([]);
+  const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
+  const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
   const [collecting, setCollecting] = useState(false);
   const [collectionMessage, setCollectionMessage] = useState('');
   const [emailRecipient, setEmailRecipient] = useState('');
@@ -506,6 +555,193 @@ export default function Home() {
     setCopied(key);
     window.setTimeout(() => setCopied(null), 1400);
   };
+
+  const toggleVideoSelection = (video: CollectedVideo) => {
+    if (!videoScript(video)) return;
+    setSelectedVideoIds((current) => {
+      const next = current.includes(video.id)
+        ? current.filter((id) => id !== video.id)
+        : [...current, video.id].slice(0, 8);
+      setTranscripts(
+        next
+          .map((id) =>
+            videoScript(
+              collectedVideos.find((candidate) => candidate.id === id) || video,
+            ),
+          )
+          .filter(Boolean),
+      );
+      setActiveVideo(0);
+      return next;
+    });
+  };
+
+  const pollTranscript = async (video: CollectedVideo) => {
+    if (!video.jobId) return;
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      try {
+        const response = await fetch('/api/transcript-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId: video.jobId }),
+        });
+        const data = (await response.json()) as {
+          status?: 'ready' | 'processing' | 'failed';
+          transcript?: string;
+        };
+        if (!response.ok) return;
+        if (data.status === 'processing') continue;
+        if (data.status === 'ready' && data.transcript) {
+          const readyVideo: CollectedVideo = {
+            ...video,
+            transcript: data.transcript,
+            status: 'ready',
+            ...transcriptQuality(video, data.transcript),
+          };
+          setCollectedVideos((current) =>
+            current.map((item) =>
+              item.id === video.id ? { ...item, ...readyVideo } : item,
+            ),
+          );
+          if (readyVideo.qualityLabel !== 'skip') {
+            setSelectedVideoIds((current) => {
+              if (current.includes(video.id) || current.length >= 8)
+                return current;
+              setTranscripts((scripts) => [
+                ...scripts,
+                videoScript(readyVideo),
+              ]);
+              return [...current, video.id];
+            });
+          }
+          setCollectionMessage(
+            'A delayed transcript finished and was added without replacing earlier results.',
+          );
+        } else {
+          setCollectedVideos((current) =>
+            current.map((item) =>
+              item.id === video.id ? { ...item, status: 'failed' } : item,
+            ),
+          );
+        }
+        return;
+      } catch {
+        return;
+      }
+    }
+  };
+
+  const analyzeVisualText = async (video: CollectedVideo) => {
+    setAnalyzingVideoIds((current) =>
+      current.includes(video.id) ? current : [...current, video.id],
+    );
+    const finish = () =>
+      setAnalyzingVideoIds((current) =>
+        current.filter((id) => id !== video.id),
+      );
+    try {
+      let jobId = video.visualJobId;
+      if (!jobId) {
+        const startResponse = await fetch('/api/analyze-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: video.url }),
+        });
+        const start = (await startResponse.json()) as {
+          error?: string;
+          jobId?: string;
+        };
+        if (!startResponse.ok || !start.jobId)
+          throw new Error(start.error || 'Visual analysis could not start.');
+        jobId = start.jobId;
+        setCollectedVideos((current) =>
+          current.map((item) =>
+            item.id === video.id
+              ? { ...item, visualJobId: jobId, visualStatus: 'processing' }
+              : item,
+          ),
+        );
+      }
+
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const response = await fetch('/api/analyze-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId }),
+        });
+        const data = (await response.json()) as {
+          error?: string;
+          status?: 'ready' | 'processing' | 'failed';
+          visualText?: string[];
+          creatorSignals?: string[];
+          contentType?: string;
+          qualityScore?: number;
+          isDanceOnly?: boolean;
+          qualityReason?: string;
+        };
+        if (!response.ok)
+          throw new Error(data.error || 'Visual analysis failed.');
+        if (data.status === 'processing') continue;
+        if (data.status === 'failed')
+          throw new Error('Visual analysis failed.');
+
+        const score = data.qualityScore ?? video.qualityScore;
+        const updated: CollectedVideo = {
+          ...video,
+          visualJobId: jobId,
+          visualStatus: 'ready',
+          visualText: data.visualText || [],
+          creatorSignals: data.creatorSignals || [],
+          contentType: data.contentType || '',
+          qualityScore: score,
+          qualityLabel:
+            data.isDanceOnly || score < 38
+              ? 'skip'
+              : score >= 65
+                ? 'strong'
+                : 'review',
+          qualityReason: data.qualityReason || video.qualityReason,
+        };
+        setCollectedVideos((current) =>
+          current.map((item) =>
+            item.id === video.id ? { ...item, ...updated } : item,
+          ),
+        );
+        if (selectedVideoIds.includes(video.id)) {
+          const index = selectedVideoIds.indexOf(video.id);
+          setTranscripts((current) =>
+            current.map((script, scriptIndex) =>
+              scriptIndex === index ? videoScript(updated) : script,
+            ),
+          );
+        }
+        setCollectionMessage(
+          data.visualText?.length
+            ? `Found ${data.visualText.length} on-screen text signal${data.visualText.length === 1 ? '' : 's'}.`
+            : 'Visual review finished. No meaningful on-screen text was found.',
+        );
+        finish();
+        return;
+      }
+      setCollectionMessage(
+        'Visual analysis is still processing. Click “Check screen text” again in a moment.',
+      );
+    } catch (error) {
+      setCollectedVideos((current) =>
+        current.map((item) =>
+          item.id === video.id ? { ...item, visualStatus: 'failed' } : item,
+        ),
+      );
+      setCollectionMessage(
+        error instanceof Error ? error.message : 'Visual analysis failed.',
+      );
+    } finally {
+      finish();
+    }
+  };
+
   const collectCreatorContent = async () => {
     if (!collectionInput.trim()) return;
     setCollecting(true);
@@ -521,7 +757,7 @@ export default function Home() {
         body: JSON.stringify({
           source: collectionSource,
           input: collectionInput,
-          maxVideos: 3,
+          maxVideos: 8,
         }),
       });
       const data = (await response.json()) as {
@@ -532,31 +768,57 @@ export default function Home() {
       };
       if (!response.ok)
         throw new Error(data.message || data.error || 'Collection failed.');
-      const videos = (data.videos || []).slice(0, 3);
+      const videos = (data.videos || []).slice(0, 8);
       const ready = videos
         .filter((video) => video.status === 'ready' && video.transcript)
-        .map((video) => video.transcript as string);
-      setCollectedVideos(videos);
-      const nextTranscripts = videos.map((video) =>
-        video.status === 'ready' ? video.transcript || '' : '',
+        .filter((video) => video.qualityLabel !== 'skip');
+      const mergedMap = new Map(
+        collectedVideos.map((video) => [video.id, video] as const),
       );
-      setTranscripts([
-        nextTranscripts[0] || '',
-        nextTranscripts[1] || '',
-        nextTranscripts[2] || '',
-      ]);
+      videos.forEach((video) => {
+        const previous = mergedMap.get(video.id);
+        mergedMap.set(video.id, {
+          ...previous,
+          ...video,
+          visualText: previous?.visualText,
+          creatorSignals: previous?.creatorSignals,
+          contentType: previous?.contentType,
+          visualStatus: previous?.visualStatus,
+          visualJobId: previous?.visualJobId,
+        });
+      });
+      const merged = Array.from(mergedMap.values()).slice(-8);
+      const availableIds = new Set(merged.map((video) => video.id));
+      const nextSelected = [
+        ...selectedVideoIds.filter((id) => availableIds.has(id)),
+        ...ready.map((video) => video.id),
+      ]
+        .filter((id, index, ids) => ids.indexOf(id) === index)
+        .slice(0, 8);
+      setCollectedVideos(merged);
+      setSelectedVideoIds(nextSelected);
+      const nextTranscripts = nextSelected
+        .map((id) => videoScript(merged.find((video) => video.id === id)!))
+        .filter(Boolean);
+      if (nextTranscripts.length) {
+        setTranscripts(nextTranscripts);
+        setActiveVideo(0);
+      }
       setUsername(data.channel?.title || collectionInput);
+      videos
+        .filter((video) => video.status === 'processing' && video.jobId)
+        .forEach((video) => void pollTranscript(video));
       if (!videos.length) {
         setCollectionMessage(
           data.message || 'No matching recent videos were found.',
         );
       } else if (!ready.length) {
         setCollectionMessage(
-          'Videos found. Transcripts are still processing or unavailable—retry in a minute, or paste text below.',
+          'Videos found. Slow transcripts will continue loading here—earlier results will not be replaced.',
         );
       } else {
         setCollectionMessage(
-          `${ready.length} ${collectionSource === 'youtube-shorts' ? 'Shorts' : 'TikTok'} transcripts loaded below.`,
+          `${ready.length} useful ${collectionSource === 'youtube-shorts' ? 'Shorts' : 'TikTok'} candidates selected. New results were merged with the existing pool.`,
         );
       }
     } catch (error) {
@@ -872,7 +1134,7 @@ export default function Home() {
             <h2 className="section-title">Understand the creator</h2>
           </div>
           <div className="hidden items-center gap-2 text-xs text-white/40 sm:flex">
-            <FileText className="size-4" /> {filledVideos}/3 transcripts ready
+            <FileText className="size-4" /> {filledVideos} useful scripts ready
           </div>
         </div>
         <div>
@@ -917,9 +1179,7 @@ export default function Home() {
                   <Video className="size-4 text-[#ff5400]" /> Multi-channel
                   collection
                 </div>
-                <fieldset
-                  className="flex w-fit rounded-full bg-white/8 p-1"
-                >
+                <fieldset className="flex w-fit rounded-full bg-white/8 p-1">
                   <legend className="sr-only">Collection source</legend>
                   <button
                     type="button"
@@ -971,7 +1231,7 @@ export default function Home() {
                         setCollectionInput(event.target.value)
                       }
                       placeholder={
-                        'Paste up to 3 links, one per line\nhttps://www.tiktok.com/@creator/video/…'
+                        'Paste up to 8 links, one per line\nhttps://www.tiktok.com/@creator/video/…'
                       }
                       className="mt-2 min-h-[88px] resize-y border-white/15 bg-white/8 text-white placeholder:text-white/30 focus-visible:border-[#ff5400] focus-visible:ring-0"
                     />
@@ -991,13 +1251,13 @@ export default function Home() {
                   )}{' '}
                   {collectionSource === 'youtube-shorts'
                     ? 'Collect last 7 days'
-                    : 'Transcribe videos'}
+                    : 'Build candidate pool'}
                 </Button>
               </div>
               <p className="mt-3 text-xs leading-5 text-white/40">
                 {collectionSource === 'youtube-shorts'
-                  ? 'Only Shorts published in the last 7 days are loaded.'
-                  : 'TikTok profile auto-sync requires creator authorization. Public video links work immediately with the current Supadata connection.'}
+                  ? 'Up to 8 Shorts from the last 7 days are scored. Select the strongest 5–8 samples.'
+                  : 'Paste up to 8 public links. Spoken scripts load first; use screen-text analysis only where the visuals carry the story.'}
               </p>
               {collectionMessage && (
                 <p
@@ -1008,62 +1268,155 @@ export default function Home() {
                 </p>
               )}
             </div>
-            <div className="mt-7 grid grid-cols-3 gap-2 sm:gap-4">
-              {creatorImages.map((fallbackImage, index) => {
-                const video = collectedVideos[index];
-                const image = video?.thumbnail || fallbackImage;
-                return (
-                  <div key={video?.id || fallbackImage} className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setActiveVideo(index)}
-                      className={`group relative block aspect-[9/11] w-full overflow-hidden rounded-[18px] text-left transition ${activeVideo === index ? 'ring-3 ring-[#ff5400]' : 'ring-1 ring-black/8 hover:-translate-y-1'}`}
-                    >
-                      <img
-                        src={image}
-                        alt={video?.title || `Video ${index + 1}`}
-                        className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                      />
-                      <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-1 text-[10px] font-bold text-white sm:left-3 sm:top-3">
-                        {video?.platform === 'tiktok'
-                          ? 'TIKTOK'
-                          : video?.platform === 'youtube-shorts'
-                            ? 'SHORT'
-                            : `VIDEO ${index + 1}`}
-                      </span>
-                      <span className="absolute inset-x-0 bottom-0 bg-black/65 px-3 py-2.5 text-[11px] font-semibold text-white">
-                        {video
-                          ? video.status === 'ready'
-                            ? 'Transcript ready'
-                            : video.status === 'processing'
-                              ? 'Processing transcript'
-                              : 'Transcript unavailable'
-                          : 'Manual transcript'}
-                      </span>
-                    </button>
-                    {video?.url && (
-                      <a
-                        href={video.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`Open ${video.title}`}
-                        className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-black/70 text-white transition hover:bg-[#ff5400] hover:text-black sm:right-3 sm:top-3"
+            {collectedVideos.length ? (
+              <div className="mt-7">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-black">Candidate pool</p>
+                  <p className="text-xs text-black/45">
+                    {selectedVideoIds.length} selected · aim for 5–8 useful
+                    samples
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {collectedVideos.map((video) => {
+                    const selected = selectedVideoIds.includes(video.id);
+                    const selectedIndex = selectedVideoIds.indexOf(video.id);
+                    const analyzing = analyzingVideoIds.includes(video.id);
+                    return (
+                      <article
+                        key={video.id}
+                        className={`overflow-hidden rounded-[18px] border bg-white transition ${selected ? 'border-[#ff5400] shadow-[0_10px_30px_rgba(255,119,104,.18)]' : 'border-black/10'}`}
                       >
-                        <ExternalLink className="size-3.5" />
-                      </a>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                        <div className="relative aspect-video overflow-hidden bg-[#e9eee7]">
+                          {video.thumbnail ? (
+                            <img
+                              src={video.thumbnail}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="grid h-full place-items-center text-black/25">
+                              <Clapperboard className="size-8" />
+                            </div>
+                          )}
+                          <label className="absolute left-2 top-2 flex items-center gap-2 rounded-full bg-white/95 px-2.5 py-1.5 text-[11px] font-black shadow-sm">
+                            <Checkbox
+                              checked={selected}
+                              disabled={!videoScript(video)}
+                              onCheckedChange={() =>
+                                toggleVideoSelection(video)
+                              }
+                            />
+                            Use sample
+                          </label>
+                          <a
+                            href={video.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label={`Open ${video.title}`}
+                            className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-black/70 text-white"
+                          >
+                            <ExternalLink className="size-3.5" />
+                          </a>
+                        </div>
+                        <div className="p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge
+                              className={
+                                video.qualityLabel === 'strong'
+                                  ? 'bg-[#dff2df] text-[#276b36]'
+                                  : video.qualityLabel === 'review'
+                                    ? 'bg-[#fff0c9] text-[#78580b]'
+                                    : 'bg-[#ffe1dc] text-[#8b3026]'
+                              }
+                            >
+                              {video.qualityScore}% ·{' '}
+                              {video.qualityLabel === 'strong'
+                                ? 'strong'
+                                : video.qualityLabel === 'review'
+                                  ? 'review'
+                                  : 'skip'}
+                            </Badge>
+                            <span className="text-[10px] font-bold uppercase text-black/35">
+                              {video.status === 'processing'
+                                ? 'loading…'
+                                : video.status}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              selected
+                                ? setActiveVideo(selectedIndex)
+                                : toggleVideoSelection(video)
+                            }
+                            className="mt-2 line-clamp-2 min-h-10 text-left text-xs font-bold leading-5"
+                          >
+                            {video.title}
+                          </button>
+                          <p className="mt-1 line-clamp-2 min-h-8 text-[10px] leading-4 text-black/45">
+                            {video.qualityReason}
+                          </p>
+                          {video.visualText?.length ? (
+                            <p className="mt-2 rounded-[10px] bg-[#f1ecff] px-2.5 py-2 text-[10px] leading-4 text-black/65">
+                              Screen: {video.visualText.slice(0, 2).join(' · ')}
+                            </p>
+                          ) : null}
+                          {video.platform === 'tiktok' && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void analyzeVisualText(video)}
+                              disabled={analyzing}
+                              className="mt-3 h-8 w-full rounded-full text-[11px] font-bold"
+                            >
+                              {analyzing ? (
+                                <RefreshCw className="animate-spin" />
+                              ) : (
+                                <ScanText />
+                              )}
+                              {video.visualStatus === 'ready'
+                                ? 'Recheck screen text'
+                                : video.visualJobId
+                                  ? 'Check screen text'
+                                  : 'Read screen text'}
+                            </Button>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-7 grid grid-cols-3 gap-2 sm:gap-4">
+                {creatorImages.map((image, index) => (
+                  <button
+                    key={image}
+                    type="button"
+                    onClick={() => setActiveVideo(index)}
+                    className={`group relative aspect-[9/11] overflow-hidden rounded-[18px] text-left transition ${activeVideo === index ? 'ring-3 ring-[#ff5400]' : 'ring-1 ring-black/8 hover:-translate-y-1'}`}
+                  >
+                    <img
+                      src={image}
+                      alt={`Example video ${index + 1}`}
+                      className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                    />
+                    <span className="absolute inset-x-0 bottom-0 bg-black/65 px-3 py-2.5 text-[11px] font-semibold text-white">
+                      Example script {index + 1}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="mt-4 rounded-[18px] bg-[#f1f0ed] p-4">
               <div className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-[.1em] text-black/40">
                 <span>Video {activeVideo + 1} transcript</span>
-                <span>{transcripts[activeVideo].length} chars</span>
+                <span>{(transcripts[activeVideo] || '').length} chars</span>
               </div>
               <Textarea
                 aria-label={`Video ${activeVideo + 1} transcript`}
-                value={transcripts[activeVideo]}
+                value={transcripts[activeVideo] || ''}
                 onChange={(e) =>
                   setTranscripts(
                     transcripts.map((item, index) =>
@@ -1075,7 +1428,7 @@ export default function Home() {
               />
               <div className="mt-3 flex items-center gap-2 border-t border-black/8 pt-3 text-[11px] text-black/40">
                 <Upload className="size-3.5" /> Paste transcript or drop a .txt
-                file
+                file · matching uses every selected sample
               </div>
             </div>
           </article>

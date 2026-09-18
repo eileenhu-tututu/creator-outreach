@@ -54,6 +54,10 @@ type CollectedVideo = {
   transcript: string;
   status: 'ready' | 'processing' | 'failed';
   jobId?: string;
+  description?: string;
+  qualityScore: number;
+  qualityLabel: 'strong' | 'review' | 'skip';
+  qualityReason: string;
 };
 
 const supadataBase = 'https://api.supadata.ai/v1';
@@ -143,8 +147,8 @@ async function fetchTranscript(url: string, apiKey: string) {
 
   if (!data.jobId) return { transcript: '', status: 'failed' as const };
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await wait(750);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await wait(1000);
     const jobResponse = await fetch(
       `${supadataBase}/transcript/${data.jobId}`,
       {
@@ -171,6 +175,67 @@ async function fetchTranscript(url: string, apiKey: string) {
     status: 'processing' as const,
     jobId: data.jobId,
   };
+}
+
+function assessContentQuality(
+  transcript: string,
+  title = '',
+  description = '',
+) {
+  const combined = `${title} ${description} ${transcript}`.toLowerCase();
+  const words = transcript.trim().split(/\s+/).filter(Boolean).length;
+  const usefulSignals = [
+    'review',
+    'routine',
+    'tutorial',
+    'tip',
+    'haul',
+    'outfit',
+    'fashion',
+    'beauty',
+    'skincare',
+    'makeup',
+    'fitness',
+    'recipe',
+    'home',
+    'travel',
+    'problem',
+    'favorite',
+    'recommend',
+    'trying',
+    'tested',
+  ];
+  const lowSignal = [
+    'dance',
+    'dancing',
+    'choreography',
+    'lip sync',
+    'transition',
+    'trend sound',
+  ];
+  const usefulHits = usefulSignals.filter((term) => combined.includes(term));
+  const looksDanceOnly =
+    lowSignal.some((term) => combined.includes(term)) && words < 25;
+  let score = 20;
+  if (words >= 80) score += 35;
+  else if (words >= 35) score += 25;
+  else if (words >= 15) score += 12;
+  score += Math.min(usefulHits.length * 7, 28);
+  if (/\b(i|my|me|we|our)\b/.test(transcript.toLowerCase())) score += 8;
+  if (description.length >= 80) score += 8;
+  if (looksDanceOnly) score -= 28;
+  score = Math.max(5, Math.min(100, score));
+
+  const qualityLabel = score >= 65 ? 'strong' : score >= 38 ? 'review' : 'skip';
+  const qualityReason = looksDanceOnly
+    ? 'Likely dance/transition content with little spoken product context.'
+    : words < 15
+      ? 'Very little spoken context. Read on-screen text before deciding.'
+      : usefulHits.length
+        ? `Useful creator signals: ${usefulHits.slice(0, 3).join(', ')}.`
+        : 'Usable transcript, but product intent should be reviewed manually.';
+
+  return { qualityScore: score, qualityLabel, qualityReason } as const;
 }
 
 async function collectYouTubeShorts(
@@ -260,6 +325,10 @@ async function collectYouTubeShorts(
     recent.map(async (video) => {
       const url = `https://www.youtube.com/shorts/${video.id}`;
       const transcript = await fetchTranscript(url, supadataKey);
+      const quality = assessContentQuality(
+        transcript.transcript,
+        video.snippet.title,
+      );
       return {
         id: video.id,
         platform: 'youtube-shorts',
@@ -271,6 +340,7 @@ async function collectYouTubeShorts(
           video.snippet.thumbnails?.default?.url,
         url,
         ...transcript,
+        ...quality,
       };
     }),
   );
@@ -331,14 +401,14 @@ async function collectTikToks(
   const urls = tiktokUrls(input);
   if (
     !urls.length ||
-    urls.length > 3 ||
+    urls.length > 8 ||
     urls.some((url) => !isTikTokVideoUrl(url))
   ) {
     return Response.json(
       {
         error: 'invalid_tiktok_urls',
         message:
-          'Paste 1–3 public TikTok video links, separated by spaces or new lines.',
+          'Paste 1–8 public TikTok video links, separated by spaces or new lines.',
       },
       { status: 400 },
     );
@@ -358,6 +428,12 @@ async function collectTikToks(
           ? ((await metadataResponse.json()) as SupadataMetadata)
           : {};
         const id = url.match(/\/video\/(\d+)/)?.[1] || `tiktok-${index + 1}`;
+        const description = metadata.description || '';
+        const quality = assessContentQuality(
+          transcript.transcript,
+          metadata.title,
+          description,
+        );
         return {
           id,
           platform: 'tiktok',
@@ -368,7 +444,9 @@ async function collectTikToks(
           publishedAt: metadata.publishedAt,
           thumbnail: metadata.thumbnail,
           url: metadata.url || url,
+          description,
           ...transcript,
+          ...quality,
         };
       }),
   );
@@ -401,7 +479,7 @@ export async function POST(request: Request) {
   };
   const source = body.source;
   const input = body.input?.trim() || '';
-  const maxVideos = Math.min(Math.max(body.maxVideos || 3, 1), 3);
+  const maxVideos = Math.min(Math.max(body.maxVideos || 8, 1), 8);
 
   if (!source || !input) {
     return Response.json(
