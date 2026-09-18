@@ -1178,22 +1178,6 @@ export default function Home() {
         </div>
         <div>
           <article className="light-card p-5 sm:p-7">
-            <div className="mb-7 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <img
-                  src="https://images.unsplash.com/photo-1740855597684-719a84c8f2d3?w=200&h=200&fit=crop&auto=format"
-                  alt="Creator avatar"
-                  className="size-12 rounded-full object-cover"
-                />
-                <div>
-                  <p className="field-label">Creator</p>
-                  <p className="font-bold">@{cleanHandle(username)}</p>
-                </div>
-              </div>
-              <Badge className="rounded-full bg-[#e9f7eb] text-[#25733a]">
-                Ready
-              </Badge>
-            </div>
             <div className="grid gap-4 sm:grid-cols-[.8fr_1.2fr]">
               <label className="field-label">
                 Username
