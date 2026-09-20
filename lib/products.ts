@@ -40,7 +40,12 @@ const excerpt = (value: string) => {
   return sentence.length > 150 ? `${sentence.slice(0, 147)}…` : sentence;
 };
 
-export function rankProducts(products: Product[], transcripts: string[], bio: string): ProductMatch[] {
+export function rankProducts(
+  products: Product[],
+  transcripts: string[],
+  bio: string,
+  negativeConstraints: string[] = [],
+): ProductMatch[] {
   const creatorText = `${bio} ${transcripts.join(' ')}`.toLowerCase();
   const creatorWords = new Set(words(creatorText));
 
@@ -53,8 +58,13 @@ export function rankProducts(products: Product[], transcripts: string[], bio: st
       const featureText = feature.toLowerCase();
       return words(featureText).some((word) => creatorWords.has(word)) || activeConcepts.some((concept) => concept.product.some((term) => featureText.includes(term)));
     });
+    const conflicts = negativeConstraints.filter((constraint) => {
+      const meaningfulWords = words(constraint).filter((word) => word.length > 3);
+      return meaningfulWords.some((word) => productWords.has(word));
+    });
     const displayFeatures = [...new Set([...matchedFeatures, ...product.features])].slice(0, 3);
-    const score = Math.min(96, 34 + activeConcepts.length * 10 + Math.min(25, directOverlap.length * 5) + Math.min(6, matchedFeatures.length * 2) + (product.freeSample ? 2 : 0));
+    const positiveScore = 34 + activeConcepts.length * 10 + Math.min(25, directOverlap.length * 5) + Math.min(6, matchedFeatures.length * 2) + (product.freeSample ? 2 : 0);
+    const score = Math.max(1, Math.min(96, positiveScore - Math.min(45, conflicts.length * 18)));
     const evidenceIndex = transcripts.findIndex((transcript) => activeConcepts.some((concept) => concept.creator.some((term) => transcript.toLowerCase().includes(term))));
     const sourceIndex = evidenceIndex >= 0 ? evidenceIndex : transcripts.findIndex((item) => item.trim());
     const evidence = excerpt(transcripts[sourceIndex >= 0 ? sourceIndex : 0] || bio);
@@ -64,7 +74,9 @@ export function rankProducts(products: Product[], transcripts: string[], bio: st
       product,
       score,
       matchedFeatures: displayFeatures,
-      reason: `${theme} connects naturally with ${featureText}.`,
+      reason: conflicts.length
+        ? `${theme} connects with ${featureText}, but review this constraint: ${conflicts[0]}.`
+        : `${theme} connects naturally with ${featureText}.`,
       evidence,
       source: sourceIndex >= 0 ? `Video ${sourceIndex + 1}` : 'Creator bio',
     };

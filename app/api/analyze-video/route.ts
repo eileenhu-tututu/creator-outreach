@@ -1,14 +1,20 @@
+import {
+  normalizeCreatorProfile,
+  type CreatorProfile,
+} from '@/lib/creator-profile';
+
 type ExtractResult = {
   status?: 'queued' | 'active' | 'completed' | 'failed';
   jobId?: string;
   data?: {
-    onScreenText?: string[];
-    contentType?: string;
-    outreachValueScore?: number;
-    isDanceOnly?: boolean;
-    creatorSignals?: string[];
-    reason?: string;
-  };
+    persona?: string[];
+    content_style?: string[];
+    recent_events?: string[];
+    preferences?: string[];
+    pain_points?: string[];
+    negative_constraints?: string[];
+    conversation_angles?: string[];
+  } & Partial<CreatorProfile>;
   error?: string | { message?: string };
 };
 
@@ -22,15 +28,7 @@ const normalizedResult = (data: ExtractResult) => ({
         ? 'failed'
         : 'processing',
   jobId: data.jobId,
-  visualText: data.data?.onScreenText || [],
-  contentType: data.data?.contentType || '',
-  qualityScore: Math.max(
-    0,
-    Math.min(100, Math.round(data.data?.outreachValueScore || 0)),
-  ),
-  isDanceOnly: Boolean(data.data?.isDanceOnly),
-  creatorSignals: data.data?.creatorSignals || [],
-  qualityReason: data.data?.reason || '',
+  profile: normalizeCreatorProfile(data.data),
 });
 
 export async function POST(request: Request) {
@@ -76,43 +74,61 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       url,
       prompt:
-        'Read meaningful on-screen captions, overlay text, product references, personal context, preferences, problems, and opinions. Judge whether this video is useful for matching a creator to a product. Do not invent text that is not clearly visible. Dance-only or generic trend videos should receive a low outreach value score.',
+        'Analyze what is visibly shown and audibly said in this creator video. Extract only claims supported by this video. Use concise paraphrases, never copy long transcript passages. Distinguish stable creator traits from one-off events. Put explicit dislikes, safety boundaries, brand conflicts, audience sensitivities, and things outreach should avoid in negative_constraints. conversation_angles must be natural topics a brand could mention without sounding invasive or quoting the creator. Return an empty array when evidence is missing; never guess.',
       schema: {
         type: 'object',
         properties: {
-          onScreenText: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Unique, meaningful text visibly shown in the video.',
-          },
-          contentType: {
-            type: 'string',
-            description:
-              'Concise content category such as review, routine, tutorial, outfit, storytime, dance-only, or trend.',
-          },
-          outreachValueScore: {
-            type: 'number',
-            description: '0-100 usefulness for creator-to-product matching.',
-          },
-          isDanceOnly: { type: 'boolean' },
-          creatorSignals: {
+          persona: {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Concrete preferences, problems, style traits, or recent events evidenced in the video.',
+              'Evidence-backed creator identity, expertise, or recurring role signals.',
           },
-          reason: {
-            type: 'string',
-            description: 'One short explanation of the score.',
+          content_style: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Tone, format, pacing, presentation, and audience interaction style.',
+          },
+          recent_events: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Specific recent situations, changes, projects, trips, or life events mentioned.',
+          },
+          preferences: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Explicitly expressed tastes, favored products, aesthetics, routines, or formats.',
+          },
+          pain_points: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Problems, frustrations, unmet needs, or recurring practical difficulties.',
+          },
+          negative_constraints: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Explicit dislikes, boundaries, conflicts, risks, or claims outreach must avoid.',
+          },
+          conversation_angles: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Natural, respectful outreach topics paraphrased from supported video context.',
           },
         },
         required: [
-          'onScreenText',
-          'contentType',
-          'outreachValueScore',
-          'isDanceOnly',
-          'creatorSignals',
-          'reason',
+          'persona',
+          'content_style',
+          'recent_events',
+          'preferences',
+          'pain_points',
+          'negative_constraints',
+          'conversation_angles',
         ],
       },
     }),

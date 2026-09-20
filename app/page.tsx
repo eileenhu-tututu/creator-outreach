@@ -54,6 +54,14 @@ import {
   buildConversationAngles,
   type ConversationAngle,
 } from '@/lib/conversation-angles';
+import {
+  creatorProfileText,
+  hasCreatorProfileData,
+  mergeCreatorProfiles,
+  normalizeCreatorProfile,
+  profileConversationAngles,
+  type CreatorProfile,
+} from '@/lib/creator-profile';
 import { BrandNav } from '@/components/brand-nav';
 import { OutreachStory } from '@/components/outreach-story';
 
@@ -103,9 +111,7 @@ type CollectedVideo = {
   qualityScore: number;
   qualityLabel: 'strong' | 'review' | 'skip';
   qualityReason: string;
-  visualText?: string[];
-  creatorSignals?: string[];
-  contentType?: string;
+  structuredProfile?: CreatorProfile;
   visualStatus?: 'idle' | 'processing' | 'ready' | 'failed';
   visualJobId?: string;
 };
@@ -135,12 +141,12 @@ const safeHttpUrl = (value: string) => {
 
 const videoScript = (video: CollectedVideo) => {
   const spoken = video.transcript?.trim();
-  const visual = video.visualText?.filter(Boolean) || [];
-  const signals = video.creatorSignals?.filter(Boolean) || [];
+  const profile = video.structuredProfile;
   return [
     spoken ? `[Spoken transcript]\n${spoken}` : '',
-    visual.length ? `[On-screen text]\n${visual.join('\n')}` : '',
-    signals.length ? `[Visual creator signals]\n${signals.join('\n')}` : '',
+    profile && hasCreatorProfileData(profile)
+      ? `[Structured creator profile]\n${JSON.stringify(profile, null, 2)}`
+      : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -246,9 +252,31 @@ export default function Home() {
     () => transcripts.filter((item) => item.trim()).length,
     [transcripts],
   );
+  const structuredCreatorProfile = useMemo(
+    () =>
+      mergeCreatorProfiles(
+        selectedVideoIds
+          .map(
+            (id) =>
+              collectedVideos.find((video) => video.id === id)
+                ?.structuredProfile,
+          )
+          .filter((profile): profile is CreatorProfile => Boolean(profile)),
+      ),
+    [collectedVideos, selectedVideoIds],
+  );
+  const analyzedSelectedCount = selectedVideoIds.filter((id) =>
+    collectedVideos.find(
+      (video) => video.id === id && Boolean(video.structuredProfile),
+    ),
+  ).length;
+  const allSelectedVideosAnalyzed =
+    selectedVideoIds.length === 0 ||
+    analyzedSelectedCount === selectedVideoIds.length;
+  const hasStructuredProfile = hasCreatorProfileData(structuredCreatorProfile);
   const currentAngleSignature = useMemo(
-    () => JSON.stringify([bio, transcripts]),
-    [bio, transcripts],
+    () => JSON.stringify([bio, transcripts, structuredCreatorProfile]),
+    [bio, transcripts, structuredCreatorProfile],
   );
   const anglesFresh =
     conversationAngles.length > 0 && angleSignature === currentAngleSignature;
@@ -460,7 +488,13 @@ export default function Home() {
   };
 
   const findConversationAngles = () => {
-    const nextAngles = buildConversationAngles(transcripts, bio);
+    if (!allSelectedVideosAnalyzed) return;
+    const structuredAngles = profileConversationAngles(
+      structuredCreatorProfile,
+    );
+    const nextAngles = structuredAngles.length
+      ? structuredAngles
+      : buildConversationAngles(transcripts, bio);
     setConversationAngles(nextAngles);
     setSelectedAngleId('');
     setAngleSignature(currentAngleSignature);
@@ -540,10 +574,18 @@ export default function Home() {
     if (!filledVideos || !productLibrary.length || !selectedAngle) return;
     setMatchingProducts(true);
     window.setTimeout(() => {
+      const matchingSignals = hasStructuredProfile
+        ? [
+            creatorProfileText(structuredCreatorProfile),
+            selectedAngle.summary,
+            selectedAngle.dmLead,
+          ]
+        : [...transcripts, selectedAngle.summary, selectedAngle.dmLead];
       const ranked = rankProducts(
         productLibrary,
-        [...transcripts, selectedAngle.summary, selectedAngle.dmLead],
+        matchingSignals,
         bio,
+        structuredCreatorProfile.negative_constraints,
       );
       setProductMatches(ranked);
       setMatchSignature(creatorSignature);
@@ -680,7 +722,8 @@ export default function Home() {
         current.filter((id) => id !== video.id),
       );
     try {
-      let jobId = video.visualJobId;
+      let jobId =
+        video.visualStatus === 'ready' ? undefined : video.visualJobId;
       if (!jobId) {
         const startResponse = await fetch('/api/analyze-video', {
           method: 'POST',
@@ -713,12 +756,7 @@ export default function Home() {
         const data = (await response.json()) as {
           error?: string;
           status?: 'ready' | 'processing' | 'failed';
-          visualText?: string[];
-          creatorSignals?: string[];
-          contentType?: string;
-          qualityScore?: number;
-          isDanceOnly?: boolean;
-          qualityReason?: string;
+          profile?: CreatorProfile;
         };
         if (!response.ok)
           throw new Error(data.error || 'Visual analysis failed.');
@@ -726,22 +764,31 @@ export default function Home() {
         if (data.status === 'failed')
           throw new Error('Visual analysis failed.');
 
-        const score = data.qualityScore ?? video.qualityScore;
+        const profile = normalizeCreatorProfile(data.profile);
+        const signalCount = Object.values(profile).reduce(
+          (total, items) => total + items.length,
+          0,
+        );
+        const score = Math.max(
+          video.qualityScore,
+          Math.min(96, 32 + signalCount * 4),
+        );
         const updated: CollectedVideo = {
           ...video,
           visualJobId: jobId,
           visualStatus: 'ready',
-          visualText: data.visualText || [],
-          creatorSignals: data.creatorSignals || [],
-          contentType: data.contentType || '',
+          structuredProfile: profile,
           qualityScore: score,
           qualityLabel:
-            data.isDanceOnly || score < 38
+            signalCount < 2 || score < 38
               ? 'skip'
               : score >= 65
                 ? 'strong'
                 : 'review',
-          qualityReason: data.qualityReason || video.qualityReason,
+          qualityReason:
+            signalCount > 0
+              ? `${signalCount} structured creator signals extracted from the video.`
+              : 'No reliable creator signals were found in this video.',
         };
         setCollectedVideos((current) =>
           current.map((item) =>
@@ -757,15 +804,15 @@ export default function Home() {
           );
         }
         setCollectionMessage(
-          data.visualText?.length
-            ? `Found ${data.visualText.length} on-screen text signal${data.visualText.length === 1 ? '' : 's'}.`
-            : 'Visual review finished. No meaningful on-screen text was found.',
+          signalCount
+            ? `Structured video analysis completed with ${signalCount} evidence-backed signal${signalCount === 1 ? '' : 's'}.`
+            : 'Structured video analysis finished. No reliable creator signals were found.',
         );
         finish();
         return;
       }
       setCollectionMessage(
-        'Visual analysis is still processing. Click “Check screen text” again in a moment.',
+        'Structured analysis is still processing. Click “Check analysis” again in a moment.',
       );
     } catch (error) {
       setCollectedVideos((current) =>
@@ -779,6 +826,13 @@ export default function Home() {
     } finally {
       finish();
     }
+  };
+
+  const analyzeSelectedStructures = async () => {
+    const selectedVideos = selectedVideoIds
+      .map((id) => collectedVideos.find((video) => video.id === id))
+      .filter((video): video is CollectedVideo => Boolean(video));
+    await Promise.all(selectedVideos.map((video) => analyzeVisualText(video)));
   };
 
   const collectCreatorContent = async () => {
@@ -819,9 +873,7 @@ export default function Home() {
         mergedMap.set(video.id, {
           ...previous,
           ...video,
-          visualText: previous?.visualText,
-          creatorSignals: previous?.creatorSignals,
-          contentType: previous?.contentType,
+          structuredProfile: previous?.structuredProfile,
           visualStatus: previous?.visualStatus,
           visualJobId: previous?.visualJobId,
         });
@@ -1380,31 +1432,34 @@ export default function Home() {
                           <p className="mt-1 line-clamp-2 min-h-8 text-[10px] leading-4 text-black/45">
                             {video.qualityReason}
                           </p>
-                          {video.visualText?.length ? (
+                          {video.structuredProfile &&
+                          hasCreatorProfileData(video.structuredProfile) ? (
                             <p className="mt-2 rounded-[10px] bg-[#f1ecff] px-2.5 py-2 text-[10px] leading-4 text-black/65">
-                              Screen: {video.visualText.slice(0, 2).join(' · ')}
+                              Structured:{' '}
+                              {video.structuredProfile.persona
+                                .concat(video.structuredProfile.content_style)
+                                .slice(0, 2)
+                                .join(' · ') || 'profile ready'}
                             </p>
                           ) : null}
-                          {video.platform === 'tiktok' && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => void analyzeVisualText(video)}
-                              disabled={analyzing}
-                              className="mt-3 h-8 w-full rounded-full text-[11px] font-bold"
-                            >
-                              {analyzing ? (
-                                <RefreshCw className="animate-spin" />
-                              ) : (
-                                <ScanText />
-                              )}
-                              {video.visualStatus === 'ready'
-                                ? 'Recheck screen text'
-                                : video.visualJobId
-                                  ? 'Check screen text'
-                                  : 'Read screen text'}
-                            </Button>
-                          )}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void analyzeVisualText(video)}
+                            disabled={analyzing}
+                            className="mt-3 h-8 w-full rounded-full text-[11px] font-bold"
+                          >
+                            {analyzing ? (
+                              <RefreshCw className="animate-spin" />
+                            ) : (
+                              <ScanText />
+                            )}
+                            {video.visualStatus === 'ready'
+                              ? 'Re-analyze structure'
+                              : video.visualJobId
+                                ? 'Check analysis'
+                                : 'Analyze video structure'}
+                          </Button>
                         </div>
                       </article>
                     );
@@ -1497,9 +1552,67 @@ export default function Home() {
                 })}
               </div>
               <div className="mt-3 flex items-center gap-2 rounded-[14px] bg-[#f1f0ed] px-4 py-3 text-[11px] text-black/40">
-                <Upload className="size-3.5" /> Edit any script here · product
-                matching reads all selected scripts together
+                <Upload className="size-3.5" /> Edit any script here ·
+                structured analysis is used first when available
               </div>
+            </section>
+            <section
+              className="mt-6 rounded-[20px] border border-black/10 bg-[#f1ecff] p-5 sm:p-6"
+              aria-labelledby="structured-profile-title"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-[14px] bg-white text-[#27322d] shadow-sm">
+                    <Code2 className="size-4" />
+                  </span>
+                  <div>
+                    <p className="eyebrow text-black/40">STRUCTURED OUTPUT</p>
+                    <h3
+                      id="structured-profile-title"
+                      className="text-lg font-black text-[#27322d]"
+                    >
+                      Creator Profile JSON
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-xs leading-5 text-black/50">
+                      Selected video analyses are merged into one evidence-based
+                      profile. Empty fields stay empty instead of being guessed.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="rounded-full bg-white text-[#27322d]">
+                    {analyzedSelectedCount}/{selectedVideoIds.length} analyzed
+                  </Badge>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void analyzeSelectedStructures()}
+                    disabled={
+                      selectedVideoIds.length === 0 ||
+                      analyzingVideoIds.length > 0
+                    }
+                    className="h-9 rounded-full border-[#6d5a94]/25 bg-white px-4 text-xs font-black text-[#27322d]"
+                  >
+                    {analyzingVideoIds.length ? (
+                      <RefreshCw className="animate-spin" />
+                    ) : (
+                      <WandSparkles />
+                    )}
+                    {analyzingVideoIds.length
+                      ? 'Analyzing selected…'
+                      : 'Analyze selected videos'}
+                  </Button>
+                </div>
+              </div>
+              <pre className="mt-4 max-h-[360px] overflow-auto rounded-[16px] bg-[#27322d] p-4 text-[12px] leading-5 text-[#dff2df]">
+                {JSON.stringify(structuredCreatorProfile, null, 2)}
+              </pre>
+              {!hasStructuredProfile && (
+                <p className="mt-3 text-xs font-semibold text-[#6d5a94]">
+                  Select a collected video and click “Analyze video structure”
+                  to replace keyword-only inference with structured signals.
+                </p>
+              )}
             </section>
             <section
               className="mt-6 rounded-[22px] bg-[#27322d] p-5 text-white sm:p-6"
@@ -1516,16 +1629,16 @@ export default function Home() {
                       Choose what to talk about
                     </h3>
                     <p className="mt-1 max-w-2xl text-sm leading-6 text-white/55">
-                      Turn the selected scripts into natural conversation
-                      angles. Pick one before matching products—the final DM
-                      will use your choice, never copy the transcript.
+                      Choose from structured conversation angles when video
+                      analysis is available. The final DM uses your choice and
+                      never copies the transcript.
                     </p>
                   </div>
                 </div>
                 <Button
                   type="button"
                   onClick={findConversationAngles}
-                  disabled={!filledVideos}
+                  disabled={!filledVideos || !allSelectedVideosAnalyzed}
                   className="h-10 shrink-0 rounded-full bg-white px-5 font-black text-[#27322d] hover:bg-[#eaf4e8]"
                 >
                   <Sparkles />
@@ -1588,7 +1701,12 @@ export default function Home() {
                   <p className="mt-3 text-xs text-white/45">
                     {selectedAngle
                       ? `Confirmed: ${selectedAngle.title}`
-                      : 'Select one talking point to continue to product matching.'}
+                      : !allSelectedVideosAnalyzed
+                        ? 'Analyze every selected video before generating conversation angles.'
+                        : hasStructuredProfile &&
+                            !structuredCreatorProfile.conversation_angles.length
+                          ? 'No safe conversation angle was supported by the analyzed videos.'
+                          : 'Select one talking point to continue to product matching.'}
                   </p>
                 </div>
               ) : (
