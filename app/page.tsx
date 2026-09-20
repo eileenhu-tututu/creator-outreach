@@ -113,6 +113,7 @@ type CollectedVideo = {
   structuredProfile?: CreatorProfile;
   visualStatus?: 'idle' | 'processing' | 'ready' | 'failed';
   visualJobId?: string;
+  visualError?: string;
   structureStatus?: 'idle' | 'processing' | 'ready' | 'failed';
   structureJobId?: string;
 };
@@ -643,7 +644,7 @@ export default function Home() {
   };
 
   const toggleVideoSelection = (video: CollectedVideo) => {
-    if (!video.transcript?.trim()) return;
+    if (!videoScript(video)) return;
     const next = selectedVideoIds.includes(video.id)
       ? selectedVideoIds.filter((id) => id !== video.id)
       : [...selectedVideoIds, video.id].slice(0, 8);
@@ -721,6 +722,14 @@ export default function Home() {
       setAnalyzingVideoIds((current) =>
         current.filter((id) => id !== video.id),
       );
+    setCollectionMessage('Reading visible text from the video…');
+    setCollectedVideos((current) =>
+      current.map((item) =>
+        item.id === video.id
+          ? { ...item, visualStatus: 'processing', visualError: undefined }
+          : item,
+      ),
+    );
     try {
       let jobId =
         video.visualStatus === 'ready' ? undefined : video.visualJobId;
@@ -767,13 +776,14 @@ export default function Home() {
           throw new Error(data.error || 'Visual analysis failed.');
         if (data.status === 'processing') continue;
         if (data.status === 'failed')
-          throw new Error('Visual analysis failed.');
+          throw new Error(data.error || 'Screen-text analysis failed.');
 
         const score = data.qualityScore ?? video.qualityScore;
         const updated: CollectedVideo = {
           ...video,
           visualJobId: jobId,
           visualStatus: 'ready',
+          visualError: undefined,
           visualText: data.visualText || [],
           creatorSignals: data.creatorSignals || [],
           contentType: data.contentType || '',
@@ -811,14 +821,19 @@ export default function Home() {
         'Screen-text analysis is still processing. Click “Check screen text” again in a moment.',
       );
     } catch (error) {
+      const rawMessage =
+        error instanceof Error ? error.message : 'Screen-text analysis failed.';
+      const message = /limit[-_ ]?exceeded/i.test(rawMessage)
+        ? 'Supadata usage limit reached. Screen text cannot be read until the quota resets, the plan is upgraded, or SUPADATA_API_KEY is replaced.'
+        : rawMessage;
       setCollectedVideos((current) =>
         current.map((item) =>
-          item.id === video.id ? { ...item, visualStatus: 'failed' } : item,
+          item.id === video.id
+            ? { ...item, visualStatus: 'failed', visualError: message }
+            : item,
         ),
       );
-      setCollectionMessage(
-        error instanceof Error ? error.message : 'Visual analysis failed.',
-      );
+      setCollectionMessage(message);
     } finally {
       finish();
     }
@@ -969,6 +984,7 @@ export default function Home() {
           structuredProfile: previous?.structuredProfile,
           visualStatus: previous?.visualStatus,
           visualJobId: previous?.visualJobId,
+          visualError: previous?.visualError,
           structureStatus: previous?.structureStatus,
           structureJobId: previous?.structureJobId,
         });
@@ -1474,13 +1490,13 @@ export default function Home() {
                           <label className="absolute left-2 top-2 flex items-center gap-2 rounded-full bg-white/95 px-2.5 py-1.5 text-[11px] font-black shadow-sm">
                             <Checkbox
                               checked={selected}
-                              disabled={!video.transcript?.trim()}
+                              disabled={!videoScript(video)}
                               onCheckedChange={(checked) => {
                                 if (Boolean(checked) !== selected)
                                   toggleVideoSelection(video);
                               }}
                             />
-                            {video.transcript?.trim()
+                            {videoScript(video)
                               ? 'Use script'
                               : 'Script loading'}
                           </label>
@@ -1572,12 +1588,22 @@ export default function Home() {
                             ) : (
                               <ScanText />
                             )}
-                            {video.visualStatus === 'ready'
-                              ? 'Re-read screen text'
-                              : video.visualJobId
-                                ? 'Check screen text'
-                                : 'Read screen text'}
+                            {analyzing
+                              ? 'Reading screen text…'
+                              : video.visualStatus === 'ready'
+                                ? 'Re-read screen text'
+                                : video.visualJobId
+                                  ? 'Check screen text'
+                                  : 'Read screen text'}
                           </Button>
+                          {video.visualError ? (
+                            <p
+                              className="mt-2 rounded-[10px] bg-[#ffe1dc] px-2.5 py-2 text-[11px] font-semibold leading-4 text-[#8b3026]"
+                              role="alert"
+                            >
+                              {video.visualError}
+                            </p>
+                          ) : null}
                         </div>
                       </article>
                     );

@@ -12,6 +12,9 @@ type ExtractResult = {
 
 const baseUrl = 'https://api.supadata.ai/v1/extract';
 
+const errorMessage = (error: ExtractResult['error']) =>
+  typeof error === 'string' ? error : error?.message || '';
+
 const normalizedResult = (data: ExtractResult) => ({
   status:
     data.status === 'completed'
@@ -21,6 +24,7 @@ const normalizedResult = (data: ExtractResult) => ({
         : 'processing',
   jobId: data.jobId,
   profile: normalizeCreatorProfile(data.data),
+  error: errorMessage(data.error),
 });
 
 export async function POST(request: Request) {
@@ -45,7 +49,11 @@ export async function POST(request: Request) {
     const data = (await response.json().catch(() => ({}))) as ExtractResult;
     if (!response.ok) {
       return Response.json(
-        { error: 'Could not check the structured analysis job.' },
+        {
+          error:
+            errorMessage(data.error) ||
+            'Could not check the structured analysis job.',
+        },
         { status: response.status },
       );
     }
@@ -111,8 +119,7 @@ export async function POST(request: Request) {
   });
   const data = (await response.json().catch(() => ({}))) as ExtractResult;
   if (!response.ok) {
-    const providerMessage =
-      typeof data.error === 'string' ? data.error : data.error?.message;
+    const providerMessage = errorMessage(data.error);
     return Response.json(
       { error: providerMessage || 'Could not start structured analysis.' },
       { status: response.status },
