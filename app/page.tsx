@@ -924,7 +924,9 @@ export default function Home() {
         .filter((video) => video.status === 'ready' && videoScript(video))
         .filter((video) => video.qualityLabel !== 'skip');
       const mergedMap = new Map(
-        collectedVideos.map((video) => [video.id, video] as const),
+        (collectionSource === 'tiktok' ? collectedVideos : []).map(
+          (video) => [video.id, video] as const,
+        ),
       );
       videos.forEach((video) => {
         const previous = mergedMap.get(video.id);
