@@ -1,3 +1,5 @@
+import { generateGeminiJson, geminiApiKey } from '@/lib/gemini';
+
 type CollectionSource = 'youtube-shorts' | 'tiktok';
 
 type GoogleApiError = {
@@ -26,6 +28,15 @@ type YouTubeVideoItem = {
       default?: { url: string };
     };
   };
+  contentDetails?: { duration?: string };
+};
+
+type YouTubeChannelItem = {
+  contentDetails?: { relatedPlaylists?: { uploads?: string } };
+};
+
+type YouTubePlaylistItem = {
+  contentDetails?: { videoId?: string };
 };
 
 type SupadataTranscript = {
@@ -58,10 +69,13 @@ type CollectedVideo = {
   qualityScore: number;
   qualityLabel: 'strong' | 'review' | 'skip';
   qualityReason: string;
+  visualText?: string[];
+  creatorSignals?: string[];
+  contentType?: string;
+  visualStatus?: 'ready' | 'failed';
 };
 
 const supadataBase = 'https://api.supadata.ai/v1';
-const sevenDays = 7 * 24 * 60 * 60 * 1000;
 
 const transcriptText = (data: SupadataTranscript) =>
   typeof data.content === 'string'
@@ -238,11 +252,105 @@ function assessContentQuality(
   return { qualityScore: score, qualityLabel, qualityReason } as const;
 }
 
+const youtubeDurationSeconds = (duration = '') => {
+  const match = duration.match(
+    /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/,
+  );
+  if (!match) return Number.POSITIVE_INFINITY;
+  return (
+    Number(match[1] || 0) * 86400 +
+    Number(match[2] || 0) * 3600 +
+    Number(match[3] || 0) * 60 +
+    Number(match[4] || 0)
+  );
+};
+
+type GeminiYouTubeResult = {
+  videos?: Array<{
+    index?: number;
+    spokenTranscript?: string;
+    onScreenText?: string[];
+    contentType?: string;
+    outreachValueScore?: number;
+    isDanceOnly?: boolean;
+    creatorSignals?: string[];
+    reason?: string;
+  }>;
+};
+
+async function analyzeYouTubeBatch(videos: YouTubeVideoItem[]) {
+  const schema = {
+    type: 'object',
+    properties: {
+      videos: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            index: {
+              type: 'integer',
+              description: 'The one-based video number supplied in the prompt.',
+            },
+            spokenTranscript: {
+              type: 'string',
+              description:
+                'A faithful transcript of meaningful spoken words. Empty when there is no speech.',
+            },
+            onScreenText: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Meaningful visible captions, overlays, labels, and text cards in reading order. Exclude platform interface text.',
+            },
+            contentType: { type: 'string' },
+            outreachValueScore: {
+              type: 'number',
+              minimum: 0,
+              maximum: 100,
+            },
+            isDanceOnly: { type: 'boolean' },
+            creatorSignals: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+            reason: { type: 'string' },
+          },
+          required: [
+            'index',
+            'spokenTranscript',
+            'onScreenText',
+            'contentType',
+            'outreachValueScore',
+            'isDanceOnly',
+            'creatorSignals',
+            'reason',
+          ],
+        },
+      },
+    },
+    required: ['videos'],
+  };
+
+  const parts = videos.flatMap((video, index) => [
+    { text: `Video ${index + 1}: ${video.snippet.title}` },
+    {
+      file_data: {
+        file_uri: `https://www.youtube.com/shorts/${video.id}`,
+      },
+      video_metadata: { fps: 2 },
+    },
+  ]);
+  parts.push({
+    text: 'Analyze every numbered Short above. Keep each result tied to its one-based index. Preserve spoken wording and visible wording rather than summarizing them. Do not invent missing speech or text. Score product-matching usefulness low for generic dance-only or trend-only clips.',
+  });
+
+  return generateGeminiJson<GeminiYouTubeResult>({ parts, schema });
+}
+
 async function collectYouTubeShorts(
   input: string,
   maxVideos: number,
   youtubeKey: string,
-  supadataKey: string,
 ) {
   const yt = 'https://www.googleapis.com/youtube/v3';
   const searchUrl = new URL(`${yt}/search`);
@@ -271,20 +379,46 @@ async function collectYouTubeShorts(
     );
   }
 
-  const listUrl = new URL(`${supadataBase}/youtube/channel/videos`);
-  listUrl.search = new URLSearchParams({
+  const channelUrl = new URL(`${yt}/channels`);
+  channelUrl.search = new URLSearchParams({
+    part: 'contentDetails',
     id: channelId,
-    type: 'short',
-    limit: '12',
+    key: youtubeKey,
   }).toString();
-  const listResponse = await fetch(listUrl, {
-    headers: { 'x-api-key': supadataKey },
-  });
-  if (!listResponse.ok) return providerError(listResponse, 'Supadata');
-  const listData = (await listResponse.json()) as { shortIds?: string[] };
-  const shortIds = (listData.shortIds || []).slice(0, 12);
+  const channelResponse = await fetch(channelUrl);
+  if (!channelResponse.ok) return providerError(channelResponse, 'YouTube');
+  const channelData = (await channelResponse.json()) as {
+    items?: YouTubeChannelItem[];
+  };
+  const uploadsPlaylist =
+    channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+  if (!uploadsPlaylist) {
+    return Response.json(
+      {
+        error: 'channel_uploads_unavailable',
+        message: 'This channel does not expose a public uploads playlist.',
+      },
+      { status: 404 },
+    );
+  }
 
-  if (!shortIds.length) {
+  const listUrl = new URL(`${yt}/playlistItems`);
+  listUrl.search = new URLSearchParams({
+    part: 'contentDetails',
+    playlistId: uploadsPlaylist,
+    maxResults: '50',
+    key: youtubeKey,
+  }).toString();
+  const listResponse = await fetch(listUrl);
+  if (!listResponse.ok) return providerError(listResponse, 'YouTube');
+  const listData = (await listResponse.json()) as {
+    items?: YouTubePlaylistItem[];
+  };
+  const uploadedVideoIds = (listData.items || [])
+    .map((item) => item.contentDetails?.videoId || '')
+    .filter(Boolean);
+
+  if (!uploadedVideoIds.length) {
     return Response.json({
       source: 'youtube-shorts',
       channel: {
@@ -294,7 +428,6 @@ async function collectYouTubeShorts(
           match.snippet.thumbnails?.medium?.url ||
           match.snippet.thumbnails?.default?.url,
       },
-      rangeDays: 7,
       videos: [],
       message: 'No Shorts were found on this YouTube channel.',
     });
@@ -302,8 +435,8 @@ async function collectYouTubeShorts(
 
   const detailsUrl = new URL(`${yt}/videos`);
   detailsUrl.search = new URLSearchParams({
-    part: 'snippet',
-    id: shortIds.join(','),
+    part: 'snippet,contentDetails',
+    id: uploadedVideoIds.join(','),
     key: youtubeKey,
   }).toString();
   const detailsResponse = await fetch(detailsUrl);
@@ -311,9 +444,10 @@ async function collectYouTubeShorts(
   const detailsData = (await detailsResponse.json()) as {
     items?: YouTubeVideoItem[];
   };
-  const since = Date.now() - sevenDays;
-  const recent = (detailsData.items || [])
-    .filter((video) => new Date(video.snippet.publishedAt).getTime() >= since)
+  const latest = (detailsData.items || [])
+    .filter(
+      (video) => youtubeDurationSeconds(video.contentDetails?.duration) <= 180,
+    )
     .sort(
       (left, right) =>
         new Date(right.snippet.publishedAt).getTime() -
@@ -321,29 +455,62 @@ async function collectYouTubeShorts(
     )
     .slice(0, maxVideos);
 
-  const videos: CollectedVideo[] = await Promise.all(
-    recent.map(async (video) => {
-      const url = `https://www.youtube.com/shorts/${video.id}`;
-      const transcript = await fetchTranscript(url, supadataKey);
-      const quality = assessContentQuality(
-        transcript.transcript,
-        video.snippet.title,
-      );
-      return {
-        id: video.id,
-        platform: 'youtube-shorts',
-        title: video.snippet.title,
-        publishedAt: video.snippet.publishedAt,
-        thumbnail:
-          video.snippet.thumbnails?.high?.url ||
-          video.snippet.thumbnails?.medium?.url ||
-          video.snippet.thumbnails?.default?.url,
-        url,
-        ...transcript,
-        ...quality,
-      };
-    }),
-  );
+  let geminiResults: GeminiYouTubeResult['videos'] = [];
+  let analysisMessage = '';
+  if (latest.length) {
+    try {
+      geminiResults = (await analyzeYouTubeBatch(latest)).videos || [];
+    } catch (error) {
+      analysisMessage =
+        error instanceof Error
+          ? `Shorts were found, but Gemini could not read them: ${error.message}`
+          : 'Shorts were found, but Gemini could not read them.';
+    }
+  }
+
+  const videos: CollectedVideo[] = latest.map((video, index) => {
+    const analysis = geminiResults?.find(
+      (item) => Number(item.index) === index + 1,
+    );
+    const transcript = analysis?.spokenTranscript?.trim() || '';
+    const score = Math.max(
+      0,
+      Math.min(100, Math.round(Number(analysis?.outreachValueScore) || 0)),
+    );
+    const fallbackQuality = assessContentQuality(
+      transcript,
+      video.snippet.title,
+    );
+    return {
+      id: video.id,
+      platform: 'youtube-shorts',
+      title: video.snippet.title,
+      publishedAt: video.snippet.publishedAt,
+      thumbnail:
+        video.snippet.thumbnails?.high?.url ||
+        video.snippet.thumbnails?.medium?.url ||
+        video.snippet.thumbnails?.default?.url,
+      url: `https://www.youtube.com/shorts/${video.id}`,
+      transcript,
+      status: analysis ? 'ready' : 'failed',
+      visualText: analysis?.onScreenText || [],
+      creatorSignals: analysis?.creatorSignals || [],
+      contentType: analysis?.contentType || '',
+      visualStatus: analysis ? 'ready' : 'failed',
+      qualityScore: analysis ? score : fallbackQuality.qualityScore,
+      qualityLabel: analysis?.isDanceOnly
+        ? 'skip'
+        : analysis
+          ? score >= 65
+            ? 'strong'
+            : score >= 38
+              ? 'review'
+              : 'skip'
+          : fallbackQuality.qualityLabel,
+      qualityReason:
+        analysis?.reason || analysisMessage || fallbackQuality.qualityReason,
+    };
+  });
 
   return Response.json({
     source: 'youtube-shorts',
@@ -354,11 +521,11 @@ async function collectYouTubeShorts(
         match.snippet.thumbnails?.medium?.url ||
         match.snippet.thumbnails?.default?.url,
     },
-    rangeDays: 7,
+    sampleLimit: maxVideos,
     videos,
-    message: recent.length
-      ? undefined
-      : 'No YouTube Shorts were published in the last 7 days.',
+    message: latest.length
+      ? analysisMessage || undefined
+      : 'No YouTube Shorts were found on this channel.',
   });
 }
 
@@ -461,17 +628,6 @@ async function collectTikToks(
 }
 
 export async function POST(request: Request) {
-  const supadataKey = process.env.SUPADATA_API_KEY;
-  if (!supadataKey) {
-    return Response.json(
-      {
-        error: 'integration_not_configured',
-        message: 'Add SUPADATA_API_KEY to enable live video transcription.',
-      },
-      { status: 503 },
-    );
-  }
-
   const body = (await request.json().catch(() => ({}))) as {
     source?: CollectionSource;
     input?: string;
@@ -493,19 +649,31 @@ export async function POST(request: Request) {
 
   if (source === 'youtube-shorts') {
     const youtubeKey = process.env.YOUTUBE_API_KEY;
-    if (!youtubeKey) {
+    if (!youtubeKey || !geminiApiKey()) {
       return Response.json(
         {
           error: 'integration_not_configured',
-          message: 'Add YOUTUBE_API_KEY to collect YouTube Shorts.',
+          message:
+            'Add YOUTUBE_API_KEY and GEMINI_API_KEY to collect and read YouTube Shorts.',
         },
         { status: 503 },
       );
     }
-    return collectYouTubeShorts(input, maxVideos, youtubeKey, supadataKey);
+    return collectYouTubeShorts(input, maxVideos, youtubeKey);
   }
 
   if (source === 'tiktok') {
+    const supadataKey = process.env.SUPADATA_API_KEY;
+    if (!supadataKey) {
+      return Response.json(
+        {
+          error: 'integration_not_configured',
+          message:
+            'Add SUPADATA_API_KEY to load TikTok metadata and spoken transcripts.',
+        },
+        { status: 503 },
+      );
+    }
     return collectTikToks(input, maxVideos, supadataKey);
   }
 

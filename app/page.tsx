@@ -714,7 +714,7 @@ export default function Home() {
     }
   };
 
-  const analyzeVisualText = async (video: CollectedVideo) => {
+  const analyzeVisualText = async (video: CollectedVideo, file?: File) => {
     setAnalyzingVideoIds((current) =>
       current.includes(video.id) ? current : [...current, video.id],
     );
@@ -722,7 +722,11 @@ export default function Home() {
       setAnalyzingVideoIds((current) =>
         current.filter((id) => id !== video.id),
       );
-    setCollectionMessage('Reading visible text from the video…');
+    setCollectionMessage(
+      file
+        ? `Uploading ${file.name} and reading its visible text…`
+        : 'Reading visible text from the video with Gemini…',
+    );
     setCollectedVideos((current) =>
       current.map((item) =>
         item.id === video.id
@@ -731,101 +735,71 @@ export default function Home() {
       ),
     );
     try {
-      let jobId =
-        video.visualStatus === 'ready' ? undefined : video.visualJobId;
-      if (!jobId) {
-        const startResponse = await fetch('/api/analyze-video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: video.url }),
-        });
-        const start = (await startResponse.json()) as {
-          error?: string;
-          jobId?: string;
-        };
-        if (!startResponse.ok || !start.jobId)
-          throw new Error(start.error || 'Visual analysis could not start.');
-        jobId = start.jobId;
-        setCollectedVideos((current) =>
-          current.map((item) =>
-            item.id === video.id
-              ? { ...item, visualJobId: jobId, visualStatus: 'processing' }
-              : item,
-          ),
-        );
+      const requestBody = file
+        ? (() => {
+            const formData = new FormData();
+            formData.append('video', file);
+            return formData;
+          })()
+        : JSON.stringify({ url: video.url });
+      const response = await fetch('/api/analyze-video', {
+        method: 'POST',
+        ...(file ? {} : { headers: { 'Content-Type': 'application/json' } }),
+        body: requestBody,
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        status?: 'ready' | 'processing' | 'failed';
+        visualText?: string[];
+        creatorSignals?: string[];
+        contentType?: string;
+        qualityScore?: number;
+        isDanceOnly?: boolean;
+        qualityReason?: string;
+      };
+      if (!response.ok || data.status !== 'ready') {
+        throw new Error(data.error || 'Gemini screen-text analysis failed.');
       }
 
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1500));
-        const response = await fetch('/api/analyze-video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId }),
-        });
-        const data = (await response.json()) as {
-          error?: string;
-          status?: 'ready' | 'processing' | 'failed';
-          visualText?: string[];
-          creatorSignals?: string[];
-          contentType?: string;
-          qualityScore?: number;
-          isDanceOnly?: boolean;
-          qualityReason?: string;
-        };
-        if (!response.ok)
-          throw new Error(data.error || 'Visual analysis failed.');
-        if (data.status === 'processing') continue;
-        if (data.status === 'failed')
-          throw new Error(data.error || 'Screen-text analysis failed.');
-
-        const score = data.qualityScore ?? video.qualityScore;
-        const updated: CollectedVideo = {
-          ...video,
-          visualJobId: jobId,
-          visualStatus: 'ready',
-          visualError: undefined,
-          visualText: data.visualText || [],
-          creatorSignals: data.creatorSignals || [],
-          contentType: data.contentType || '',
-          qualityScore: score,
-          qualityLabel:
-            data.isDanceOnly || score < 38
-              ? 'skip'
-              : score >= 65
-                ? 'strong'
-                : 'review',
-          qualityReason: data.qualityReason || video.qualityReason,
-        };
-        setCollectedVideos((current) =>
-          current.map((item) =>
-            item.id === video.id ? { ...item, ...updated } : item,
+      const score = data.qualityScore ?? video.qualityScore;
+      const updated: CollectedVideo = {
+        ...video,
+        visualJobId: undefined,
+        visualStatus: 'ready',
+        visualError: undefined,
+        visualText: data.visualText || [],
+        creatorSignals: data.creatorSignals || [],
+        contentType: data.contentType || '',
+        qualityScore: score,
+        qualityLabel:
+          data.isDanceOnly || score < 38
+            ? 'skip'
+            : score >= 65
+              ? 'strong'
+              : 'review',
+        qualityReason: data.qualityReason || video.qualityReason,
+      };
+      setCollectedVideos((current) =>
+        current.map((item) =>
+          item.id === video.id ? { ...item, ...updated } : item,
+        ),
+      );
+      if (selectedVideoIds.includes(video.id)) {
+        const index = selectedVideoIds.indexOf(video.id);
+        setTranscripts((current) =>
+          current.map((script, scriptIndex) =>
+            scriptIndex === index ? videoScript(updated) : script,
           ),
         );
-        if (selectedVideoIds.includes(video.id)) {
-          const index = selectedVideoIds.indexOf(video.id);
-          setTranscripts((current) =>
-            current.map((script, scriptIndex) =>
-              scriptIndex === index ? videoScript(updated) : script,
-            ),
-          );
-        }
-        setCollectionMessage(
-          data.visualText?.length
-            ? `Found ${data.visualText.length} on-screen text item${data.visualText.length === 1 ? '' : 's'} and added them to this script.`
-            : 'Screen-text review finished. No meaningful visible text was found.',
-        );
-        finish();
-        return;
       }
       setCollectionMessage(
-        'Screen-text analysis is still processing. Click “Check screen text” again in a moment.',
+        data.visualText?.length
+          ? `Gemini found ${data.visualText.length} on-screen text item${data.visualText.length === 1 ? '' : 's'} and added them to this script.`
+          : 'Gemini finished reviewing the video. No meaningful visible text was found.',
       );
     } catch (error) {
-      const rawMessage =
+      const message =
         error instanceof Error ? error.message : 'Screen-text analysis failed.';
-      const message = /limit[-_ ]?exceeded/i.test(rawMessage)
-        ? 'Supadata usage limit reached. Screen text cannot be read until the quota resets, the plan is upgraded, or SUPADATA_API_KEY is replaced.'
-        : rawMessage;
       setCollectedVideos((current) =>
         current.map((item) =>
           item.id === video.id
@@ -848,74 +822,47 @@ export default function Home() {
         current.filter((id) => id !== video.id),
       );
     try {
-      let jobId =
-        video.structureStatus === 'ready' ? undefined : video.structureJobId;
-      if (!jobId) {
-        const startResponse = await fetch('/api/structure-video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: video.url }),
-        });
-        const start = (await startResponse.json()) as {
-          error?: string;
-          jobId?: string;
-        };
-        if (!startResponse.ok || !start.jobId)
-          throw new Error(
-            start.error || 'Structured analysis could not start.',
-          );
-        jobId = start.jobId;
-        setCollectedVideos((current) =>
-          current.map((item) =>
-            item.id === video.id
-              ? {
-                  ...item,
-                  structureJobId: jobId,
-                  structureStatus: 'processing',
-                }
-              : item,
-          ),
-        );
+      setCollectedVideos((current) =>
+        current.map((item) =>
+          item.id === video.id
+            ? { ...item, structureStatus: 'processing' }
+            : item,
+        ),
+      );
+      const response = await fetch('/api/structure-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: video.title,
+          description: video.description,
+          transcript: video.transcript,
+          visualText: video.visualText || [],
+        }),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        status?: 'ready' | 'failed';
+        profile?: CreatorProfile;
+      };
+      if (!response.ok || data.status !== 'ready') {
+        throw new Error(data.error || 'Structured analysis failed.');
       }
 
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1500));
-        const response = await fetch('/api/structure-video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId }),
-        });
-        const data = (await response.json()) as {
-          error?: string;
-          status?: 'ready' | 'processing' | 'failed';
-          profile?: CreatorProfile;
-        };
-        if (!response.ok)
-          throw new Error(data.error || 'Structured analysis failed.');
-        if (data.status === 'processing') continue;
-        if (data.status === 'failed')
-          throw new Error('Structured analysis failed.');
-
-        const profile = normalizeCreatorProfile(data.profile);
-        setCollectedVideos((current) =>
-          current.map((item) =>
-            item.id === video.id
-              ? {
-                  ...item,
-                  structureJobId: jobId,
-                  structureStatus: 'ready',
-                  structuredProfile: profile,
-                }
-              : item,
-          ),
-        );
-        setCollectionMessage(
-          'Structured profile updated. Original scripts and on-screen text were left unchanged.',
-        );
-        return;
-      }
+      const profile = normalizeCreatorProfile(data.profile);
+      setCollectedVideos((current) =>
+        current.map((item) =>
+          item.id === video.id
+            ? {
+                ...item,
+                structureJobId: undefined,
+                structureStatus: 'ready',
+                structuredProfile: profile,
+              }
+            : item,
+        ),
+      );
       setCollectionMessage(
-        'Structured analysis is still processing. Run the profile step again to check it.',
+        'Gemini structured the existing script and screen text without changing either source.',
       );
     } catch (error) {
       setCollectedVideos((current) =>
@@ -945,7 +892,7 @@ export default function Home() {
     setCollecting(true);
     setCollectionMessage(
       collectionSource === 'youtube-shorts'
-        ? 'Finding Shorts from the last 7 days…'
+        ? 'Finding the creator’s latest 7 Shorts…'
         : 'Reading public TikTok videos…',
     );
     try {
@@ -955,7 +902,7 @@ export default function Home() {
         body: JSON.stringify({
           source: collectionSource,
           input: collectionInput,
-          maxVideos: 8,
+          maxVideos: collectionSource === 'youtube-shorts' ? 7 : 8,
         }),
       });
       const data = (await response.json()) as {
@@ -968,7 +915,7 @@ export default function Home() {
         throw new Error(data.message || data.error || 'Collection failed.');
       const videos = (data.videos || []).slice(0, 8);
       const ready = videos
-        .filter((video) => video.status === 'ready' && video.transcript)
+        .filter((video) => video.status === 'ready' && videoScript(video))
         .filter((video) => video.qualityLabel !== 'skip');
       const mergedMap = new Map(
         collectedVideos.map((video) => [video.id, video] as const),
@@ -978,15 +925,16 @@ export default function Home() {
         mergedMap.set(video.id, {
           ...previous,
           ...video,
-          visualText: previous?.visualText,
-          creatorSignals: previous?.creatorSignals,
-          contentType: previous?.contentType,
-          structuredProfile: previous?.structuredProfile,
-          visualStatus: previous?.visualStatus,
-          visualJobId: previous?.visualJobId,
-          visualError: previous?.visualError,
-          structureStatus: previous?.structureStatus,
-          structureJobId: previous?.structureJobId,
+          visualText: previous?.visualText ?? video.visualText,
+          creatorSignals: previous?.creatorSignals ?? video.creatorSignals,
+          contentType: previous?.contentType ?? video.contentType,
+          structuredProfile:
+            previous?.structuredProfile ?? video.structuredProfile,
+          visualStatus: previous?.visualStatus ?? video.visualStatus,
+          visualJobId: previous?.visualJobId ?? video.visualJobId,
+          visualError: previous?.visualError ?? video.visualError,
+          structureStatus: previous?.structureStatus ?? video.structureStatus,
+          structureJobId: previous?.structureJobId ?? video.structureJobId,
         });
       });
       const merged = Array.from(mergedMap.values()).slice(-8);
@@ -1435,14 +1383,14 @@ export default function Home() {
                     <Clapperboard />
                   )}{' '}
                   {collectionSource === 'youtube-shorts'
-                    ? 'Collect last 7 days'
+                    ? 'Collect latest 7'
                     : 'Build candidate pool'}
                 </Button>
               </div>
               <p className="mt-3 text-xs leading-5 text-white/40">
                 {collectionSource === 'youtube-shorts'
-                  ? 'Up to 8 Shorts from the last 7 days are scored. Select the strongest 5–8 samples.'
-                  : 'Paste up to 8 public links. Spoken scripts load first; use screen-text analysis only where the visuals carry the story.'}
+                  ? 'The latest 7 Shorts are scored regardless of publish date, so weekly creators still have enough samples.'
+                  : 'Paste up to 8 public links. Spoken scripts load first; upload the saved video to Gemini when the visuals carry important text.'}
               </p>
               {collectionMessage && (
                 <p
@@ -1458,7 +1406,8 @@ export default function Home() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-black">Candidate pool</p>
                   <p className="text-xs text-black/45">
-                    {selectedVideoIds.length} selected · aim for 5–8 useful
+                    {selectedVideoIds.length} selected · aim for 5–
+                    {collectionSource === 'youtube-shorts' ? '7' : '8'} useful
                     samples
                   </p>
                 </div>
@@ -1576,26 +1525,52 @@ export default function Home() {
                                 : 'Check transcript'}
                             </Button>
                           ) : null}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void analyzeVisualText(video)}
-                            disabled={analyzing}
-                            className="mt-2 h-8 w-full rounded-full text-[11px] font-bold"
-                          >
-                            {analyzing ? (
-                              <RefreshCw className="animate-spin" />
-                            ) : (
-                              <ScanText />
-                            )}
-                            {analyzing
-                              ? 'Reading screen text…'
-                              : video.visualStatus === 'ready'
-                                ? 'Re-read screen text'
-                                : video.visualJobId
-                                  ? 'Check screen text'
+                          {video.platform === 'tiktok' ? (
+                            <label
+                              className={`mt-2 inline-flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-black/15 bg-white px-3 text-[11px] font-bold transition hover:bg-black/[.04] ${analyzing ? 'pointer-events-none opacity-50' : ''}`}
+                            >
+                              {analyzing ? (
+                                <RefreshCw className="size-4 animate-spin" />
+                              ) : (
+                                <Upload className="size-4" />
+                              )}
+                              {analyzing
+                                ? 'Gemini is reading video…'
+                                : video.visualStatus === 'ready'
+                                  ? 'Upload again for screen text'
+                                  : 'Upload video for screen text'}
+                              <input
+                                type="file"
+                                accept="video/mp4,video/quicktime,video/webm,video/*"
+                                className="sr-only"
+                                disabled={analyzing}
+                                onChange={(event) => {
+                                  const file = event.currentTarget.files?.[0];
+                                  if (file) void analyzeVisualText(video, file);
+                                  event.currentTarget.value = '';
+                                }}
+                              />
+                            </label>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void analyzeVisualText(video)}
+                              disabled={analyzing}
+                              className="mt-2 h-8 w-full rounded-full text-[11px] font-bold"
+                            >
+                              {analyzing ? (
+                                <RefreshCw className="animate-spin" />
+                              ) : (
+                                <ScanText />
+                              )}
+                              {analyzing
+                                ? 'Gemini is reading video…'
+                                : video.visualStatus === 'ready'
+                                  ? 'Re-read screen text'
                                   : 'Read screen text'}
-                          </Button>
+                            </Button>
+                          )}
                           {video.visualError ? (
                             <p
                               className="mt-2 rounded-[10px] bg-[#ffe1dc] px-2.5 py-2 text-[11px] font-semibold leading-4 text-[#8b3026]"
