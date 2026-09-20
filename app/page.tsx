@@ -72,11 +72,7 @@ const creatorImages = [
 ];
 const productImage =
   'https://images.unsplash.com/photo-1576188973526-0e5d7047b0cf?w=900&h=700&fit=crop&auto=format';
-const initialTranscripts = [
-  'Okay so I walked outside and literally cried because the rain just destroyed my outfit. Like I spent 45 minutes putting this together. Seattle you win again.',
-  "POV: you're me trying to find a jacket that's actually waterproof AND cute at the same time. Does this exist? Six months of searching.",
-  "Coffee shop fit check. Fourteen days of rain and I'm still going outside every day. This is character development.",
-];
+const initialTranscripts = [''];
 
 type Result = {
   score: number;
@@ -175,8 +171,8 @@ const transcriptQuality = (video: CollectedVideo, transcript: string) => {
 };
 
 export default function Home() {
-  const [username, setUsername] = useState('rainydayrachel');
-  const [bio, setBio] = useState('Seattle girl · daily fits · chaotic energy');
+  const [username, setUsername] = useState('');
+  const [bio, setBio] = useState('');
   const [transcripts, setTranscripts] = useState(initialTranscripts);
   const [activeVideo, setActiveVideo] = useState(0);
   const [conversationAngles, setConversationAngles] = useState<
@@ -212,6 +208,9 @@ export default function Home() {
   const [collectionInput, setCollectionInput] = useState('');
   const [collectedVideos, setCollectedVideos] = useState<CollectedVideo[]>([]);
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
+  const [checkingTranscriptIds, setCheckingTranscriptIds] = useState<string[]>(
+    [],
+  );
   const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
   const [collecting, setCollecting] = useState(false);
   const [collectionMessage, setCollectionMessage] = useState('');
@@ -640,28 +639,30 @@ export default function Home() {
   };
 
   const toggleVideoSelection = (video: CollectedVideo) => {
-    if (!videoScript(video)) return;
+    if (!video.transcript?.trim()) return;
     const next = selectedVideoIds.includes(video.id)
       ? selectedVideoIds.filter((id) => id !== video.id)
       : [...selectedVideoIds, video.id].slice(0, 8);
     setSelectedVideoIds(next);
-    setTranscripts(
-      next
-        .map((id) =>
-          videoScript(
-            collectedVideos.find((candidate) => candidate.id === id) || video,
-          ),
-        )
-        .filter(Boolean),
-    );
+    const nextScripts = next
+      .map((id) =>
+        videoScript(
+          collectedVideos.find((candidate) => candidate.id === id) || video,
+        ),
+      )
+      .filter(Boolean);
+    setTranscripts(nextScripts.length ? nextScripts : ['']);
     setActiveVideo(0);
   };
 
   const pollTranscript = async (video: CollectedVideo) => {
     if (!video.jobId) return;
-    for (let attempt = 0; attempt < 14; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
-      try {
+    setCheckingTranscriptIds((current) =>
+      current.includes(video.id) ? current : [...current, video.id],
+    );
+    try {
+      for (let attempt = 0; attempt < 14; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
         const response = await fetch('/api/transcript-status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -685,19 +686,8 @@ export default function Home() {
               item.id === video.id ? { ...item, ...readyVideo } : item,
             ),
           );
-          if (readyVideo.qualityLabel !== 'skip') {
-            setSelectedVideoIds((current) => {
-              if (current.includes(video.id) || current.length >= 8)
-                return current;
-              setTranscripts((scripts) => [
-                ...scripts,
-                videoScript(readyVideo),
-              ]);
-              return [...current, video.id];
-            });
-          }
           setCollectionMessage(
-            'A delayed transcript finished and was added without replacing earlier results.',
+            'The script is ready. Select “Use script” to add it to the workspace.',
           );
         } else {
           setCollectedVideos((current) =>
@@ -707,9 +697,15 @@ export default function Home() {
           );
         }
         return;
-      } catch {
-        return;
       }
+    } catch {
+      setCollectionMessage(
+        'The script status could not be checked. Try “Check transcript” again.',
+      );
+    } finally {
+      setCheckingTranscriptIds((current) =>
+        current.filter((id) => id !== video.id),
+      );
     }
   };
 
@@ -882,7 +878,6 @@ export default function Home() {
       const availableIds = new Set(merged.map((video) => video.id));
       const nextSelected = [
         ...selectedVideoIds.filter((id) => availableIds.has(id)),
-        ...ready.map((video) => video.id),
       ]
         .filter((id, index, ids) => ids.indexOf(id) === index)
         .slice(0, 8);
@@ -891,10 +886,8 @@ export default function Home() {
       const nextTranscripts = nextSelected
         .map((id) => videoScript(merged.find((video) => video.id === id)!))
         .filter(Boolean);
-      if (nextTranscripts.length) {
-        setTranscripts(nextTranscripts);
-        setActiveVideo(0);
-      }
+      setTranscripts(nextTranscripts.length ? nextTranscripts : ['']);
+      setActiveVideo(0);
       setUsername(data.channel?.title || collectionInput);
       videos
         .filter((video) => video.status === 'processing' && video.jobId)
@@ -905,11 +898,11 @@ export default function Home() {
         );
       } else if (!ready.length) {
         setCollectionMessage(
-          'Videos found. Slow transcripts will continue loading here—earlier results will not be replaced.',
+          'Videos found. Scripts are still loading; select them only after they become ready.',
         );
       } else {
         setCollectionMessage(
-          `${ready.length} useful ${collectionSource === 'youtube-shorts' ? 'Shorts' : 'TikTok'} candidates selected. New results were merged with the existing pool.`,
+          `${ready.length} ${collectionSource === 'youtube-shorts' ? 'Shorts' : 'TikTok'} scripts are ready. Choose “Use script” on the ones you want.`,
         );
       }
     } catch (error) {
@@ -1236,6 +1229,7 @@ export default function Home() {
                 <Input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  placeholder="@creator"
                   className="light-input mt-2"
                 />
               </label>
@@ -1244,6 +1238,7 @@ export default function Home() {
                 <Input
                   value={bio}
                   onChange={(e) => setBio(e.target.value)}
+                  placeholder="Short creator bio (optional)"
                   className="light-input mt-2"
                 />
               </label>
@@ -1357,6 +1352,9 @@ export default function Home() {
                     const selected = selectedVideoIds.includes(video.id);
                     const selectedIndex = selectedVideoIds.indexOf(video.id);
                     const analyzing = analyzingVideoIds.includes(video.id);
+                    const checkingTranscript = checkingTranscriptIds.includes(
+                      video.id,
+                    );
                     return (
                       <article
                         key={video.id}
@@ -1377,12 +1375,15 @@ export default function Home() {
                           <label className="absolute left-2 top-2 flex items-center gap-2 rounded-full bg-white/95 px-2.5 py-1.5 text-[11px] font-black shadow-sm">
                             <Checkbox
                               checked={selected}
-                              disabled={!videoScript(video)}
-                              onCheckedChange={() =>
-                                toggleVideoSelection(video)
-                              }
+                              disabled={!video.transcript?.trim()}
+                              onCheckedChange={(checked) => {
+                                if (Boolean(checked) !== selected)
+                                  toggleVideoSelection(video);
+                              }}
                             />
-                            Use sample
+                            {video.transcript?.trim()
+                              ? 'Use script'
+                              : 'Script loading'}
                           </label>
                           <a
                             href={video.url}
@@ -1442,12 +1443,30 @@ export default function Home() {
                                 .join(' · ') || 'profile ready'}
                             </p>
                           ) : null}
+                          {video.status === 'processing' && video.jobId ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void pollTranscript(video)}
+                              disabled={checkingTranscript}
+                              className="mt-3 h-8 w-full rounded-full text-[11px] font-bold"
+                            >
+                              {checkingTranscript ? (
+                                <RefreshCw className="animate-spin" />
+                              ) : (
+                                <FileText />
+                              )}
+                              {checkingTranscript
+                                ? 'Reading script…'
+                                : 'Check transcript'}
+                            </Button>
+                          ) : null}
                           <Button
                             type="button"
                             variant="outline"
                             onClick={() => void analyzeVisualText(video)}
                             disabled={analyzing}
-                            className="mt-3 h-8 w-full rounded-full text-[11px] font-bold"
+                            className="mt-2 h-8 w-full rounded-full text-[11px] font-bold"
                           >
                             {analyzing ? (
                               <RefreshCw className="animate-spin" />
@@ -1467,24 +1486,15 @@ export default function Home() {
                 </div>
               </div>
             ) : (
-              <div className="mt-7 grid grid-cols-3 gap-2 sm:gap-4">
-                {creatorImages.map((image, index) => (
-                  <button
-                    key={image}
-                    type="button"
-                    onClick={() => setActiveVideo(index)}
-                    className={`group relative aspect-[9/11] overflow-hidden rounded-[18px] text-left transition ${activeVideo === index ? 'ring-3 ring-[#ff5400]' : 'ring-1 ring-black/8 hover:-translate-y-1'}`}
-                  >
-                    <img
-                      src={image}
-                      alt={`Example video ${index + 1}`}
-                      className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                    />
-                    <span className="absolute inset-x-0 bottom-0 bg-black/65 px-3 py-2.5 text-[11px] font-semibold text-white">
-                      Example script {index + 1}
-                    </span>
-                  </button>
-                ))}
+              <div className="mt-7 rounded-[18px] border border-dashed border-black/15 bg-[#f1f0ed] px-5 py-8 text-center">
+                <Clapperboard className="mx-auto size-8 text-black/25" />
+                <p className="mt-3 text-sm font-black text-black/70">
+                  No videos collected yet
+                </p>
+                <p className="mt-1 text-xs text-black/40">
+                  Search a YouTube Shorts creator or paste public TikTok links
+                  above. Real scripts will appear only after collection.
+                </p>
               </div>
             )}
             <section className="mt-5" aria-labelledby="selected-transcripts">
@@ -1537,6 +1547,7 @@ export default function Home() {
                       <Textarea
                         aria-label={`Script ${index + 1}${sourceVideo ? ` from ${sourceVideo.title}` : ''}`}
                         value={script}
+                        placeholder="Paste a transcript here, or collect and select a real video above. No script has been parsed yet."
                         onFocus={() => setActiveVideo(index)}
                         onChange={(event) =>
                           setTranscripts((current) =>
