@@ -7,6 +7,7 @@ type ExtractResult = {
   status?: 'queued' | 'active' | 'completed' | 'failed';
   jobId?: string;
   data?: {
+    on_screen_text?: string[];
     persona?: string[];
     content_style?: string[];
     recent_events?: string[];
@@ -28,6 +29,12 @@ const normalizedResult = (data: ExtractResult) => ({
         ? 'failed'
         : 'processing',
   jobId: data.jobId,
+  visualText: Array.isArray(data.data?.on_screen_text)
+    ? data.data.on_screen_text
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [],
   profile: normalizeCreatorProfile(data.data),
 });
 
@@ -74,10 +81,16 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       url,
       prompt:
-        'Analyze what is visibly shown and audibly said in this creator video. Extract only claims supported by this video. Use concise paraphrases, never copy long transcript passages. Distinguish stable creator traits from one-off events. Put explicit dislikes, safety boundaries, brand conflicts, audience sensitivities, and things outreach should avoid in negative_constraints. conversation_angles must be natural topics a brand could mention without sounding invasive or quoting the creator. Return an empty array when evidence is missing; never guess.',
+        'First transcribe every meaningful, clearly visible text overlay, caption, label, and product phrase into on_screen_text. Preserve the visible wording and do not summarize it. Then analyze what is visibly shown and audibly said in this creator video. Extract only claims supported by this video. Use concise paraphrases for the profile fields, never copy long transcript passages. Distinguish stable creator traits from one-off events. Put explicit dislikes, safety boundaries, brand conflicts, audience sensitivities, and things outreach should avoid in negative_constraints. conversation_angles must be natural topics a brand could mention without sounding invasive or quoting the creator. Return an empty array when evidence is missing; never guess.',
       schema: {
         type: 'object',
         properties: {
+          on_screen_text: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Verbatim meaningful text visibly shown in the video, in reading order. Do not paraphrase.',
+          },
           persona: {
             type: 'array',
             items: { type: 'string' },
@@ -122,6 +135,7 @@ export async function POST(request: Request) {
           },
         },
         required: [
+          'on_screen_text',
           'persona',
           'content_style',
           'recent_events',

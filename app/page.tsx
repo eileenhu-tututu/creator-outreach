@@ -107,6 +107,7 @@ type CollectedVideo = {
   qualityScore: number;
   qualityLabel: 'strong' | 'review' | 'skip';
   qualityReason: string;
+  visualText?: string[];
   structuredProfile?: CreatorProfile;
   visualStatus?: 'idle' | 'processing' | 'ready' | 'failed';
   visualJobId?: string;
@@ -137,9 +138,11 @@ const safeHttpUrl = (value: string) => {
 
 const videoScript = (video: CollectedVideo) => {
   const spoken = video.transcript?.trim();
+  const visual = video.visualText?.filter(Boolean) || [];
   const profile = video.structuredProfile;
   return [
     spoken ? `[Spoken transcript]\n${spoken}` : '',
+    visual.length ? `[On-screen text]\n${visual.join('\n')}` : '',
     profile && hasCreatorProfileData(profile)
       ? `[Structured creator profile]\n${JSON.stringify(profile, null, 2)}`
       : '',
@@ -752,6 +755,7 @@ export default function Home() {
         const data = (await response.json()) as {
           error?: string;
           status?: 'ready' | 'processing' | 'failed';
+          visualText?: string[];
           profile?: CreatorProfile;
         };
         if (!response.ok)
@@ -773,6 +777,7 @@ export default function Home() {
           ...video,
           visualJobId: jobId,
           visualStatus: 'ready',
+          visualText: data.visualText || [],
           structuredProfile: profile,
           qualityScore: score,
           qualityLabel:
@@ -800,9 +805,9 @@ export default function Home() {
           );
         }
         setCollectionMessage(
-          signalCount
-            ? `Structured video analysis completed with ${signalCount} evidence-backed signal${signalCount === 1 ? '' : 's'}.`
-            : 'Structured video analysis finished. No reliable creator signals were found.',
+          data.visualText?.length || signalCount
+            ? `Video analysis completed: ${data.visualText?.length || 0} visible text item${data.visualText?.length === 1 ? '' : 's'} and ${signalCount} structured signal${signalCount === 1 ? '' : 's'}.`
+            : 'Video analysis finished. No readable screen text or reliable creator signals were found.',
         );
         finish();
         return;
@@ -869,6 +874,7 @@ export default function Home() {
         mergedMap.set(video.id, {
           ...previous,
           ...video,
+          visualText: previous?.visualText,
           structuredProfile: previous?.structuredProfile,
           visualStatus: previous?.visualStatus,
           visualJobId: previous?.visualJobId,
@@ -1433,6 +1439,16 @@ export default function Home() {
                           <p className="mt-1 line-clamp-2 min-h-8 text-[10px] leading-4 text-black/45">
                             {video.qualityReason}
                           </p>
+                          {video.visualText?.length ? (
+                            <div className="mt-2 rounded-[10px] bg-[#fff4d6] px-2.5 py-2 text-[10px] leading-4 text-black/70">
+                              <p className="font-black uppercase tracking-[.08em] text-black/40">
+                                On-screen text
+                              </p>
+                              <p className="mt-1">
+                                {video.visualText.slice(0, 3).join(' · ')}
+                              </p>
+                            </div>
+                          ) : null}
                           {video.structuredProfile &&
                           hasCreatorProfileData(video.structuredProfile) ? (
                             <p className="mt-2 rounded-[10px] bg-[#f1ecff] px-2.5 py-2 text-[10px] leading-4 text-black/65">
@@ -1474,10 +1490,10 @@ export default function Home() {
                               <ScanText />
                             )}
                             {video.visualStatus === 'ready'
-                              ? 'Re-analyze structure'
+                              ? 'Re-read text + structure'
                               : video.visualJobId
                                 ? 'Check analysis'
-                                : 'Analyze video structure'}
+                                : 'Read text + structure'}
                           </Button>
                         </div>
                       </article>
@@ -1586,7 +1602,8 @@ export default function Home() {
                     </h3>
                     <p className="mt-1 max-w-2xl text-xs leading-5 text-black/50">
                       Selected video analyses are merged into one evidence-based
-                      profile. Empty fields stay empty instead of being guessed.
+                      profile. Visible text remains in each transcript; empty
+                      profile fields stay empty instead of being guessed.
                     </p>
                   </div>
                 </div>
@@ -1620,8 +1637,8 @@ export default function Home() {
               </pre>
               {!hasStructuredProfile && (
                 <p className="mt-3 text-xs font-semibold text-[#6d5a94]">
-                  Select a collected video and click “Analyze video structure”
-                  to replace keyword-only inference with structured signals.
+                  Select a collected video and click “Read text + structure” to
+                  recover on-screen text and add structured signals.
                 </p>
               )}
             </section>
