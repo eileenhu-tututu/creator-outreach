@@ -108,9 +108,13 @@ type CollectedVideo = {
   qualityLabel: 'strong' | 'review' | 'skip';
   qualityReason: string;
   visualText?: string[];
+  creatorSignals?: string[];
+  contentType?: string;
   structuredProfile?: CreatorProfile;
   visualStatus?: 'idle' | 'processing' | 'ready' | 'failed';
   visualJobId?: string;
+  structureStatus?: 'idle' | 'processing' | 'ready' | 'failed';
+  structureJobId?: string;
 };
 const cleanHandle = (value: string) =>
   value.trim().replace(/^@/, '') || 'creator';
@@ -139,13 +143,9 @@ const safeHttpUrl = (value: string) => {
 const videoScript = (video: CollectedVideo) => {
   const spoken = video.transcript?.trim();
   const visual = video.visualText?.filter(Boolean) || [];
-  const profile = video.structuredProfile;
   return [
     spoken ? `[Spoken transcript]\n${spoken}` : '',
     visual.length ? `[On-screen text]\n${visual.join('\n')}` : '',
-    profile && hasCreatorProfileData(profile)
-      ? `[Structured creator profile]\n${JSON.stringify(profile, null, 2)}`
-      : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -215,6 +215,7 @@ export default function Home() {
     [],
   );
   const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
+  const [structuringVideoIds, setStructuringVideoIds] = useState<string[]>([]);
   const [collecting, setCollecting] = useState(false);
   const [collectionMessage, setCollectionMessage] = useState('');
   const [emailRecipient, setEmailRecipient] = useState('');
@@ -756,7 +757,11 @@ export default function Home() {
           error?: string;
           status?: 'ready' | 'processing' | 'failed';
           visualText?: string[];
-          profile?: CreatorProfile;
+          creatorSignals?: string[];
+          contentType?: string;
+          qualityScore?: number;
+          isDanceOnly?: boolean;
+          qualityReason?: string;
         };
         if (!response.ok)
           throw new Error(data.error || 'Visual analysis failed.');
@@ -764,32 +769,22 @@ export default function Home() {
         if (data.status === 'failed')
           throw new Error('Visual analysis failed.');
 
-        const profile = normalizeCreatorProfile(data.profile);
-        const signalCount = Object.values(profile).reduce(
-          (total, items) => total + items.length,
-          0,
-        );
-        const score = Math.max(
-          video.qualityScore,
-          Math.min(96, 32 + signalCount * 4),
-        );
+        const score = data.qualityScore ?? video.qualityScore;
         const updated: CollectedVideo = {
           ...video,
           visualJobId: jobId,
           visualStatus: 'ready',
           visualText: data.visualText || [],
-          structuredProfile: profile,
+          creatorSignals: data.creatorSignals || [],
+          contentType: data.contentType || '',
           qualityScore: score,
           qualityLabel:
-            signalCount < 2 || score < 38
+            data.isDanceOnly || score < 38
               ? 'skip'
               : score >= 65
                 ? 'strong'
                 : 'review',
-          qualityReason:
-            signalCount > 0
-              ? `${signalCount} structured creator signals extracted from the video.`
-              : 'No reliable creator signals were found in this video.',
+          qualityReason: data.qualityReason || video.qualityReason,
         };
         setCollectedVideos((current) =>
           current.map((item) =>
@@ -805,15 +800,15 @@ export default function Home() {
           );
         }
         setCollectionMessage(
-          data.visualText?.length || signalCount
-            ? `Video analysis completed: ${data.visualText?.length || 0} visible text item${data.visualText?.length === 1 ? '' : 's'} and ${signalCount} structured signal${signalCount === 1 ? '' : 's'}.`
-            : 'Video analysis finished. No readable screen text or reliable creator signals were found.',
+          data.visualText?.length
+            ? `Found ${data.visualText.length} on-screen text item${data.visualText.length === 1 ? '' : 's'} and added them to this script.`
+            : 'Screen-text review finished. No meaningful visible text was found.',
         );
         finish();
         return;
       }
       setCollectionMessage(
-        'Structured analysis is still processing. Click “Check analysis” again in a moment.',
+        'Screen-text analysis is still processing. Click “Check screen text” again in a moment.',
       );
     } catch (error) {
       setCollectedVideos((current) =>
@@ -829,11 +824,105 @@ export default function Home() {
     }
   };
 
+  const analyzeVideoStructure = async (video: CollectedVideo) => {
+    setStructuringVideoIds((current) =>
+      current.includes(video.id) ? current : [...current, video.id],
+    );
+    const finish = () =>
+      setStructuringVideoIds((current) =>
+        current.filter((id) => id !== video.id),
+      );
+    try {
+      let jobId =
+        video.structureStatus === 'ready' ? undefined : video.structureJobId;
+      if (!jobId) {
+        const startResponse = await fetch('/api/structure-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: video.url }),
+        });
+        const start = (await startResponse.json()) as {
+          error?: string;
+          jobId?: string;
+        };
+        if (!startResponse.ok || !start.jobId)
+          throw new Error(
+            start.error || 'Structured analysis could not start.',
+          );
+        jobId = start.jobId;
+        setCollectedVideos((current) =>
+          current.map((item) =>
+            item.id === video.id
+              ? {
+                  ...item,
+                  structureJobId: jobId,
+                  structureStatus: 'processing',
+                }
+              : item,
+          ),
+        );
+      }
+
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const response = await fetch('/api/structure-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId }),
+        });
+        const data = (await response.json()) as {
+          error?: string;
+          status?: 'ready' | 'processing' | 'failed';
+          profile?: CreatorProfile;
+        };
+        if (!response.ok)
+          throw new Error(data.error || 'Structured analysis failed.');
+        if (data.status === 'processing') continue;
+        if (data.status === 'failed')
+          throw new Error('Structured analysis failed.');
+
+        const profile = normalizeCreatorProfile(data.profile);
+        setCollectedVideos((current) =>
+          current.map((item) =>
+            item.id === video.id
+              ? {
+                  ...item,
+                  structureJobId: jobId,
+                  structureStatus: 'ready',
+                  structuredProfile: profile,
+                }
+              : item,
+          ),
+        );
+        setCollectionMessage(
+          'Structured profile updated. Original scripts and on-screen text were left unchanged.',
+        );
+        return;
+      }
+      setCollectionMessage(
+        'Structured analysis is still processing. Run the profile step again to check it.',
+      );
+    } catch (error) {
+      setCollectedVideos((current) =>
+        current.map((item) =>
+          item.id === video.id ? { ...item, structureStatus: 'failed' } : item,
+        ),
+      );
+      setCollectionMessage(
+        error instanceof Error ? error.message : 'Structured analysis failed.',
+      );
+    } finally {
+      finish();
+    }
+  };
+
   const analyzeSelectedStructures = async () => {
     const selectedVideos = selectedVideoIds
       .map((id) => collectedVideos.find((video) => video.id === id))
       .filter((video): video is CollectedVideo => Boolean(video));
-    await Promise.all(selectedVideos.map((video) => analyzeVisualText(video)));
+    await Promise.all(
+      selectedVideos.map((video) => analyzeVideoStructure(video)),
+    );
   };
 
   const collectCreatorContent = async () => {
@@ -875,9 +964,13 @@ export default function Home() {
           ...previous,
           ...video,
           visualText: previous?.visualText,
+          creatorSignals: previous?.creatorSignals,
+          contentType: previous?.contentType,
           structuredProfile: previous?.structuredProfile,
           visualStatus: previous?.visualStatus,
           visualJobId: previous?.visualJobId,
+          structureStatus: previous?.structureStatus,
+          structureJobId: previous?.structureJobId,
         });
       });
       const merged = Array.from(mergedMap.values()).slice(-8);
@@ -1449,16 +1542,6 @@ export default function Home() {
                               </p>
                             </div>
                           ) : null}
-                          {video.structuredProfile &&
-                          hasCreatorProfileData(video.structuredProfile) ? (
-                            <p className="mt-2 rounded-[10px] bg-[#f1ecff] px-2.5 py-2 text-[10px] leading-4 text-black/65">
-                              Structured:{' '}
-                              {video.structuredProfile.persona
-                                .concat(video.structuredProfile.content_style)
-                                .slice(0, 2)
-                                .join(' · ') || 'profile ready'}
-                            </p>
-                          ) : null}
                           {video.status === 'processing' && video.jobId ? (
                             <Button
                               type="button"
@@ -1490,10 +1573,10 @@ export default function Home() {
                               <ScanText />
                             )}
                             {video.visualStatus === 'ready'
-                              ? 'Re-read text + structure'
+                              ? 'Re-read screen text'
                               : video.visualJobId
-                                ? 'Check analysis'
-                                : 'Read text + structure'}
+                                ? 'Check screen text'
+                                : 'Read screen text'}
                           </Button>
                         </div>
                       </article>
@@ -1579,8 +1662,8 @@ export default function Home() {
                 })}
               </div>
               <div className="mt-3 flex items-center gap-2 rounded-[14px] bg-[#f1f0ed] px-4 py-3 text-[11px] text-black/40">
-                <Upload className="size-3.5" /> Edit any script here ·
-                structured analysis is used first when available
+                <Upload className="size-3.5" /> Edit any script here · spoken
+                and on-screen text stay intact before structured analysis
               </div>
             </section>
             <section
@@ -1601,9 +1684,9 @@ export default function Home() {
                       Creator Profile JSON
                     </h3>
                     <p className="mt-1 max-w-2xl text-xs leading-5 text-black/50">
-                      Selected video analyses are merged into one evidence-based
-                      profile. Visible text remains in each transcript; empty
-                      profile fields stay empty instead of being guessed.
+                      Second step only: selected videos are summarized after
+                      their scripts are ready. This step never changes or
+                      replaces spoken transcripts or on-screen text.
                     </p>
                   </div>
                 </div>
@@ -1617,18 +1700,18 @@ export default function Home() {
                     onClick={() => void analyzeSelectedStructures()}
                     disabled={
                       selectedVideoIds.length === 0 ||
-                      analyzingVideoIds.length > 0
+                      structuringVideoIds.length > 0
                     }
                     className="h-9 rounded-full border-[#6d5a94]/25 bg-white px-4 text-xs font-black text-[#27322d]"
                   >
-                    {analyzingVideoIds.length ? (
+                    {structuringVideoIds.length ? (
                       <RefreshCw className="animate-spin" />
                     ) : (
                       <WandSparkles />
                     )}
-                    {analyzingVideoIds.length
-                      ? 'Analyzing selected…'
-                      : 'Analyze selected videos'}
+                    {structuringVideoIds.length
+                      ? 'Building profile…'
+                      : 'Build structured profile'}
                   </Button>
                 </div>
               </div>
@@ -1637,8 +1720,8 @@ export default function Home() {
               </pre>
               {!hasStructuredProfile && (
                 <p className="mt-3 text-xs font-semibold text-[#6d5a94]">
-                  Select a collected video and click “Read text + structure” to
-                  recover on-screen text and add structured signals.
+                  First select real scripts above. Then build the structured
+                  profile as a separate second step.
                 </p>
               )}
             </section>

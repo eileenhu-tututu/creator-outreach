@@ -1,21 +1,14 @@
-import {
-  normalizeCreatorProfile,
-  type CreatorProfile,
-} from '@/lib/creator-profile';
-
 type ExtractResult = {
   status?: 'queued' | 'active' | 'completed' | 'failed';
   jobId?: string;
   data?: {
-    on_screen_text?: string[];
-    persona?: string[];
-    content_style?: string[];
-    recent_events?: string[];
-    preferences?: string[];
-    pain_points?: string[];
-    negative_constraints?: string[];
-    conversation_angles?: string[];
-  } & Partial<CreatorProfile>;
+    onScreenText?: string[];
+    contentType?: string;
+    outreachValueScore?: number;
+    isDanceOnly?: boolean;
+    creatorSignals?: string[];
+    reason?: string;
+  };
   error?: string | { message?: string };
 };
 
@@ -29,13 +22,15 @@ const normalizedResult = (data: ExtractResult) => ({
         ? 'failed'
         : 'processing',
   jobId: data.jobId,
-  visualText: Array.isArray(data.data?.on_screen_text)
-    ? data.data.on_screen_text
-        .filter((item): item is string => typeof item === 'string')
-        .map((item) => item.trim())
-        .filter(Boolean)
-    : [],
-  profile: normalizeCreatorProfile(data.data),
+  visualText: data.data?.onScreenText || [],
+  contentType: data.data?.contentType || '',
+  qualityScore: Math.max(
+    0,
+    Math.min(100, Math.round(data.data?.outreachValueScore || 0)),
+  ),
+  isDanceOnly: Boolean(data.data?.isDanceOnly),
+  creatorSignals: data.data?.creatorSignals || [],
+  qualityReason: data.data?.reason || '',
 });
 
 export async function POST(request: Request) {
@@ -60,7 +55,7 @@ export async function POST(request: Request) {
     const data = (await response.json().catch(() => ({}))) as ExtractResult;
     if (!response.ok) {
       return Response.json(
-        { error: 'Could not check the visual analysis job.' },
+        { error: 'Could not check the screen-text analysis job.' },
         { status: response.status },
       );
     }
@@ -81,68 +76,44 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       url,
       prompt:
-        'First transcribe every meaningful, clearly visible text overlay, caption, label, and product phrase into on_screen_text. Preserve the visible wording and do not summarize it. Then analyze what is visibly shown and audibly said in this creator video. Extract only claims supported by this video. Use concise paraphrases for the profile fields, never copy long transcript passages. Distinguish stable creator traits from one-off events. Put explicit dislikes, safety boundaries, brand conflicts, audience sensitivities, and things outreach should avoid in negative_constraints. conversation_angles must be natural topics a brand could mention without sounding invasive or quoting the creator. Return an empty array when evidence is missing; never guess.',
+        'Read meaningful on-screen captions, overlay text, product references, personal context, preferences, problems, and opinions. Preserve the visible wording and do not replace it with a summary. Judge whether this video is useful for matching a creator to a product. Do not invent text that is not clearly visible. Dance-only or generic trend videos should receive a low outreach value score.',
       schema: {
         type: 'object',
         properties: {
-          on_screen_text: {
+          onScreenText: {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Verbatim meaningful text visibly shown in the video, in reading order. Do not paraphrase.',
+              'Unique, meaningful text visibly shown in the video, preserving its wording.',
           },
-          persona: {
-            type: 'array',
-            items: { type: 'string' },
+          contentType: {
+            type: 'string',
             description:
-              'Evidence-backed creator identity, expertise, or recurring role signals.',
+              'Concise content category such as review, routine, tutorial, outfit, storytime, dance-only, or trend.',
           },
-          content_style: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Tone, format, pacing, presentation, and audience interaction style.',
+          outreachValueScore: {
+            type: 'number',
+            description: '0-100 usefulness for creator-to-product matching.',
           },
-          recent_events: {
+          isDanceOnly: { type: 'boolean' },
+          creatorSignals: {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Specific recent situations, changes, projects, trips, or life events mentioned.',
+              'Concrete preferences, problems, style traits, or recent events evidenced in the video.',
           },
-          preferences: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Explicitly expressed tastes, favored products, aesthetics, routines, or formats.',
-          },
-          pain_points: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Problems, frustrations, unmet needs, or recurring practical difficulties.',
-          },
-          negative_constraints: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Explicit dislikes, boundaries, conflicts, risks, or claims outreach must avoid.',
-          },
-          conversation_angles: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Natural, respectful outreach topics paraphrased from supported video context.',
+          reason: {
+            type: 'string',
+            description: 'One short explanation of the score.',
           },
         },
         required: [
-          'on_screen_text',
-          'persona',
-          'content_style',
-          'recent_events',
-          'preferences',
-          'pain_points',
-          'negative_constraints',
-          'conversation_angles',
+          'onScreenText',
+          'contentType',
+          'outreachValueScore',
+          'isDanceOnly',
+          'creatorSignals',
+          'reason',
         ],
       },
     }),
@@ -153,14 +124,12 @@ export async function POST(request: Request) {
       typeof data.error === 'string' ? data.error : data.error?.message;
     return Response.json(
       {
-        error: providerMessage || 'Supadata could not start visual analysis.',
+        error:
+          providerMessage || 'Supadata could not start screen-text analysis.',
       },
       { status: response.status },
     );
   }
 
-  return Response.json({
-    status: 'processing',
-    jobId: data.jobId,
-  });
+  return Response.json({ status: 'processing', jobId: data.jobId });
 }
