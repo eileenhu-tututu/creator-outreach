@@ -119,6 +119,10 @@ type CollectedVideo = {
 };
 const cleanHandle = (value: string) =>
   value.trim().replace(/^@/, '') || 'creator';
+const isYouTubeVideoInput = (value: string) =>
+  /(?:youtube\.com\/(?:shorts\/|watch\?v=)|youtu\.be\/)[\w-]{11}/i.test(
+    value.trim(),
+  );
 const escapeHtml = (value: string) =>
   value
     .replace(/&/g, '&amp;')
@@ -892,7 +896,9 @@ export default function Home() {
     setCollecting(true);
     setCollectionMessage(
       collectionSource === 'youtube-shorts'
-        ? 'Finding the creator’s latest 7 Shorts…'
+        ? isYouTubeVideoInput(collectionInput)
+          ? 'Reading this Short with Gemini…'
+          : 'Finding the creator’s latest 7 Shorts…'
         : 'Reading public TikTok videos…',
     );
     try {
@@ -1343,14 +1349,14 @@ export default function Home() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 {collectionSource === 'youtube-shorts' ? (
                   <div className="flex-1 text-xs font-semibold text-white/55">
-                    Channel name or @handle
+                    YouTube channel, handle, or Shorts URL
                     <Input
-                      aria-label="YouTube channel name or handle"
+                      aria-label="YouTube channel, handle, or Shorts URL"
                       value={collectionInput}
                       onChange={(event) =>
                         setCollectionInput(event.target.value)
                       }
-                      placeholder="@creator or channel name"
+                      placeholder="@creator, channel URL, or Shorts URL"
                       className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/35 focus-visible:border-[#ff5400] focus-visible:ring-0"
                     />
                   </div>
@@ -1383,13 +1389,15 @@ export default function Home() {
                     <Clapperboard />
                   )}{' '}
                   {collectionSource === 'youtube-shorts'
-                    ? 'Collect latest 7'
+                    ? isYouTubeVideoInput(collectionInput)
+                      ? 'Analyze this Short'
+                      : 'Collect latest 7'
                     : 'Build candidate pool'}
                 </Button>
               </div>
               <p className="mt-3 text-xs leading-5 text-white/40">
                 {collectionSource === 'youtube-shorts'
-                  ? 'The latest 7 Shorts are scored regardless of publish date, so weekly creators still have enough samples.'
+                  ? 'Enter a channel name, @handle, channel URL, or one Shorts URL. Channels return the latest 7 Shorts; a video URL analyzes that Short only.'
                   : 'Paste up to 8 public links. Spoken scripts load first; upload the saved video to Gemini when the visuals carry important text.'}
               </p>
               {collectionMessage && (
@@ -1406,9 +1414,10 @@ export default function Home() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-black">Candidate pool</p>
                   <p className="text-xs text-black/45">
-                    {selectedVideoIds.length} selected · aim for 5–
-                    {collectionSource === 'youtube-shorts' ? '7' : '8'} useful
-                    samples
+                    {collectionSource === 'youtube-shorts' &&
+                    isYouTubeVideoInput(collectionInput)
+                      ? '1 Short ready for review'
+                      : `${selectedVideoIds.length} selected · aim for 5–${collectionSource === 'youtube-shorts' ? '7' : '8'} useful samples`}
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

@@ -22,6 +22,8 @@ type YouTubeVideoItem = {
   snippet: {
     title: string;
     publishedAt: string;
+    channelId?: string;
+    channelTitle?: string;
     thumbnails?: {
       medium?: { url: string };
       high?: { url: string };
@@ -32,6 +34,11 @@ type YouTubeVideoItem = {
 };
 
 type YouTubeChannelItem = {
+  id?: string;
+  snippet?: {
+    title?: string;
+    thumbnails?: { default?: { url: string }; medium?: { url: string } };
+  };
   contentDetails?: { relatedPlaylists?: { uploads?: string } };
 };
 
@@ -76,6 +83,50 @@ type CollectedVideo = {
 };
 
 const supadataBase = 'https://api.supadata.ai/v1';
+
+const youtubeVideoId = (value: string) => {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    let id = '';
+    if (host === 'youtu.be')
+      id = url.pathname.split('/').filter(Boolean)[0] || '';
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      id =
+        url.pathname.match(/^\/shorts\/([^/?]+)/)?.[1] ||
+        url.searchParams.get('v') ||
+        '';
+    }
+    return /^[\w-]{11}$/.test(id) ? id : '';
+  } catch {
+    return '';
+  }
+};
+
+const youtubeChannelReference = (value: string) => {
+  const input = value.trim();
+  if (/^@[\w.-]+$/.test(input)) {
+    return { type: 'handle' as const, value: input.slice(1) };
+  }
+  try {
+    const url = new URL(input);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (host !== 'youtube.com' && host !== 'm.youtube.com') return null;
+    const segments = url.pathname.split('/').filter(Boolean);
+    if (segments[0]?.startsWith('@')) {
+      return { type: 'handle' as const, value: segments[0].slice(1) };
+    }
+    if (segments[0] === 'channel' && /^UC[\w-]+$/.test(segments[1] || '')) {
+      return { type: 'id' as const, value: segments[1] };
+    }
+    if ((segments[0] === 'c' || segments[0] === 'user') && segments[1]) {
+      return { type: 'search' as const, value: segments[1] };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
 
 const transcriptText = (data: SupadataTranscript) =>
   typeof data.content === 'string'
@@ -347,28 +398,164 @@ async function analyzeYouTubeBatch(videos: YouTubeVideoItem[]) {
   return generateGeminiJson<GeminiYouTubeResult>({ parts, schema });
 }
 
+async function buildYouTubeVideos(sourceVideos: YouTubeVideoItem[]) {
+  let geminiResults: GeminiYouTubeResult['videos'] = [];
+  let analysisMessage = '';
+  if (sourceVideos.length) {
+    try {
+      geminiResults = (await analyzeYouTubeBatch(sourceVideos)).videos || [];
+    } catch (error) {
+      analysisMessage =
+        error instanceof Error
+          ? `Shorts were found, but Gemini could not read them: ${error.message}`
+          : 'Shorts were found, but Gemini could not read them.';
+    }
+  }
+
+  const videos: CollectedVideo[] = sourceVideos.map((video, index) => {
+    const analysis = geminiResults?.find(
+      (item) => Number(item.index) === index + 1,
+    );
+    const transcript = analysis?.spokenTranscript?.trim() || '';
+    const score = Math.max(
+      0,
+      Math.min(100, Math.round(Number(analysis?.outreachValueScore) || 0)),
+    );
+    const fallbackQuality = assessContentQuality(
+      transcript,
+      video.snippet.title,
+    );
+    return {
+      id: video.id,
+      platform: 'youtube-shorts',
+      title: video.snippet.title,
+      publishedAt: video.snippet.publishedAt,
+      thumbnail:
+        video.snippet.thumbnails?.high?.url ||
+        video.snippet.thumbnails?.medium?.url ||
+        video.snippet.thumbnails?.default?.url,
+      url: `https://www.youtube.com/shorts/${video.id}`,
+      transcript,
+      status: analysis ? 'ready' : 'failed',
+      visualText: analysis?.onScreenText || [],
+      creatorSignals: analysis?.creatorSignals || [],
+      contentType: analysis?.contentType || '',
+      visualStatus: analysis ? 'ready' : 'failed',
+      qualityScore: analysis ? score : fallbackQuality.qualityScore,
+      qualityLabel: analysis?.isDanceOnly
+        ? 'skip'
+        : analysis
+          ? score >= 65
+            ? 'strong'
+            : score >= 38
+              ? 'review'
+              : 'skip'
+          : fallbackQuality.qualityLabel,
+      qualityReason:
+        analysis?.reason || analysisMessage || fallbackQuality.qualityReason,
+    };
+  });
+
+  return { videos, analysisMessage };
+}
+
+async function collectSingleYouTubeShort(videoId: string, youtubeKey: string) {
+  const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
+  detailsUrl.search = new URLSearchParams({
+    part: 'snippet,contentDetails',
+    id: videoId,
+    key: youtubeKey,
+  }).toString();
+  const detailsResponse = await fetch(detailsUrl);
+  if (!detailsResponse.ok) return providerError(detailsResponse, 'YouTube');
+  const detailsData = (await detailsResponse.json()) as {
+    items?: YouTubeVideoItem[];
+  };
+  const video = detailsData.items?.[0];
+  if (!video) {
+    return Response.json(
+      {
+        error: 'video_not_found',
+        message: 'This YouTube Short is unavailable or private.',
+      },
+      { status: 404 },
+    );
+  }
+
+  const { videos, analysisMessage } = await buildYouTubeVideos([video]);
+  return Response.json({
+    source: 'youtube-shorts',
+    channel: {
+      id: video.snippet.channelId || '',
+      title: video.snippet.channelTitle || 'YouTube creator',
+    },
+    sampleLimit: 1,
+    videos,
+    message: analysisMessage || undefined,
+  });
+}
+
 async function collectYouTubeShorts(
   input: string,
   maxVideos: number,
   youtubeKey: string,
 ) {
-  const yt = 'https://www.googleapis.com/youtube/v3';
-  const searchUrl = new URL(`${yt}/search`);
-  searchUrl.search = new URLSearchParams({
-    part: 'snippet',
-    q: input,
-    type: 'channel',
-    maxResults: '1',
-    key: youtubeKey,
-  }).toString();
+  const directVideoId = youtubeVideoId(input);
+  if (directVideoId) {
+    return collectSingleYouTubeShort(directVideoId, youtubeKey);
+  }
 
-  const searchResponse = await fetch(searchUrl);
-  if (!searchResponse.ok) return providerError(searchResponse, 'YouTube');
-  const searchData = (await searchResponse.json()) as {
-    items?: YouTubeSearchItem[];
-  };
-  const match = searchData.items?.[0];
-  const channelId = match?.id.channelId;
+  const yt = 'https://www.googleapis.com/youtube/v3';
+  const channelReference = youtubeChannelReference(input);
+  let channelId = '';
+  let channelTitle = '';
+  let channelAvatar = '';
+
+  if (channelReference?.type === 'handle' || channelReference?.type === 'id') {
+    const lookupUrl = new URL(`${yt}/channels`);
+    lookupUrl.search = new URLSearchParams({
+      part: 'snippet',
+      ...(channelReference.type === 'handle'
+        ? { forHandle: channelReference.value }
+        : { id: channelReference.value }),
+      key: youtubeKey,
+    }).toString();
+    const lookupResponse = await fetch(lookupUrl);
+    if (!lookupResponse.ok) return providerError(lookupResponse, 'YouTube');
+    const lookupData = (await lookupResponse.json()) as {
+      items?: YouTubeChannelItem[];
+    };
+    const channel = lookupData.items?.[0];
+    channelId = channel?.id || '';
+    channelTitle = channel?.snippet?.title || '';
+    channelAvatar =
+      channel?.snippet?.thumbnails?.medium?.url ||
+      channel?.snippet?.thumbnails?.default?.url ||
+      '';
+  } else {
+    const searchUrl = new URL(`${yt}/search`);
+    searchUrl.search = new URLSearchParams({
+      part: 'snippet',
+      q: channelReference?.value || input,
+      type: 'channel',
+      maxResults: '1',
+      key: youtubeKey,
+    }).toString();
+
+    const searchResponse = await fetch(searchUrl);
+    if (!searchResponse.ok) return providerError(searchResponse, 'YouTube');
+    const searchData = (await searchResponse.json()) as {
+      items?: YouTubeSearchItem[];
+    };
+    const match = searchData.items?.[0];
+    channelId = match?.id.channelId || '';
+    channelTitle = match?.snippet.title || '';
+    channelAvatar =
+      match?.snippet.thumbnails?.medium?.url ||
+      match?.snippet.thumbnails?.default?.url ||
+      '';
+  }
+
   if (!channelId) {
     return Response.json(
       {
@@ -423,10 +610,8 @@ async function collectYouTubeShorts(
       source: 'youtube-shorts',
       channel: {
         id: channelId,
-        title: match.snippet.title,
-        avatar:
-          match.snippet.thumbnails?.medium?.url ||
-          match.snippet.thumbnails?.default?.url,
+        title: channelTitle,
+        avatar: channelAvatar,
       },
       videos: [],
       message: 'No Shorts were found on this YouTube channel.',
@@ -455,71 +640,14 @@ async function collectYouTubeShorts(
     )
     .slice(0, maxVideos);
 
-  let geminiResults: GeminiYouTubeResult['videos'] = [];
-  let analysisMessage = '';
-  if (latest.length) {
-    try {
-      geminiResults = (await analyzeYouTubeBatch(latest)).videos || [];
-    } catch (error) {
-      analysisMessage =
-        error instanceof Error
-          ? `Shorts were found, but Gemini could not read them: ${error.message}`
-          : 'Shorts were found, but Gemini could not read them.';
-    }
-  }
-
-  const videos: CollectedVideo[] = latest.map((video, index) => {
-    const analysis = geminiResults?.find(
-      (item) => Number(item.index) === index + 1,
-    );
-    const transcript = analysis?.spokenTranscript?.trim() || '';
-    const score = Math.max(
-      0,
-      Math.min(100, Math.round(Number(analysis?.outreachValueScore) || 0)),
-    );
-    const fallbackQuality = assessContentQuality(
-      transcript,
-      video.snippet.title,
-    );
-    return {
-      id: video.id,
-      platform: 'youtube-shorts',
-      title: video.snippet.title,
-      publishedAt: video.snippet.publishedAt,
-      thumbnail:
-        video.snippet.thumbnails?.high?.url ||
-        video.snippet.thumbnails?.medium?.url ||
-        video.snippet.thumbnails?.default?.url,
-      url: `https://www.youtube.com/shorts/${video.id}`,
-      transcript,
-      status: analysis ? 'ready' : 'failed',
-      visualText: analysis?.onScreenText || [],
-      creatorSignals: analysis?.creatorSignals || [],
-      contentType: analysis?.contentType || '',
-      visualStatus: analysis ? 'ready' : 'failed',
-      qualityScore: analysis ? score : fallbackQuality.qualityScore,
-      qualityLabel: analysis?.isDanceOnly
-        ? 'skip'
-        : analysis
-          ? score >= 65
-            ? 'strong'
-            : score >= 38
-              ? 'review'
-              : 'skip'
-          : fallbackQuality.qualityLabel,
-      qualityReason:
-        analysis?.reason || analysisMessage || fallbackQuality.qualityReason,
-    };
-  });
+  const { videos, analysisMessage } = await buildYouTubeVideos(latest);
 
   return Response.json({
     source: 'youtube-shorts',
     channel: {
       id: channelId,
-      title: match.snippet.title,
-      avatar:
-        match.snippet.thumbnails?.medium?.url ||
-        match.snippet.thumbnails?.default?.url,
+      title: channelTitle,
+      avatar: channelAvatar,
     },
     sampleLimit: maxVideos,
     videos,
