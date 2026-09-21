@@ -76,7 +76,7 @@ export const creatorProfileText = (profile: CreatorProfile) =>
 export function profileConversationAngles(
   profile: CreatorProfile,
 ): ConversationAngle[] {
-  return profile.conversation_angles.slice(0, 4).map((angle, index) => ({
+  return profile.conversation_angles.slice(0, 8).map((angle, index) => ({
     id: `structured-angle-${index}`,
     title: angle.length > 58 ? `${angle.slice(0, 55)}…` : angle,
     dmLead: angle.charAt(0).toLowerCase() + angle.slice(1),

@@ -124,7 +124,7 @@ export function buildConversationAngles(
       (left, right) =>
         right.sourceCount + right.bioHit - (left.sourceCount + left.bioHit),
     )
-    .slice(0, 4)
+    .slice(0, 8)
     .map(({ pattern: _pattern, bioHit: _bioHit, ...angle }) => angle);
 
   if (ranked.length) return ranked;

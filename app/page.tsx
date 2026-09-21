@@ -16,11 +16,13 @@ import {
   Mail,
   MessageCircle,
   PackageSearch,
+  Plus,
   RefreshCw,
   ScanText,
   Send,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
   Video,
   WandSparkles,
@@ -289,7 +291,12 @@ export default function Home() {
   const anglesFresh =
     conversationAngles.length > 0 && angleSignature === currentAngleSignature;
   const selectedAngle = anglesFresh
-    ? conversationAngles.find((angle) => angle.id === selectedAngleId) || null
+    ? conversationAngles.find(
+        (angle) =>
+          angle.id === selectedAngleId &&
+          angle.title.trim() &&
+          angle.dmLead.trim(),
+      ) || null
     : null;
   const creatorSignature = useMemo(
     () =>
@@ -509,6 +516,52 @@ export default function Home() {
     setProductMatches([]);
     setSelectedProductId(null);
     setResult(null);
+  };
+
+  const resetAfterAngleChange = () => {
+    setProductMatches([]);
+    setSelectedProductId(null);
+    setResult(null);
+  };
+
+  const addConversationAngle = () => {
+    if (!filledVideos) return;
+    const id = `custom-angle-${crypto.randomUUID()}`;
+    setConversationAngles((current) => [
+      ...(anglesFresh ? current : []),
+      {
+        id,
+        title: '',
+        dmLead: '',
+        summary: '',
+        whyItWorks: 'Added and reviewed by you.',
+        sourceCount: 0,
+      },
+    ]);
+    setSelectedAngleId('');
+    setAngleSignature(currentAngleSignature);
+    resetAfterAngleChange();
+  };
+
+  const updateConversationAngle = (
+    id: string,
+    field: 'title' | 'summary' | 'dmLead',
+    value: string,
+  ) => {
+    setConversationAngles((current) =>
+      current.map((angle) =>
+        angle.id === id ? { ...angle, [field]: value } : angle,
+      ),
+    );
+    resetAfterAngleChange();
+  };
+
+  const removeConversationAngle = (id: string) => {
+    setConversationAngles((current) =>
+      current.filter((angle) => angle.id !== id),
+    );
+    if (selectedAngleId === id) setSelectedAngleId('');
+    resetAfterAngleChange();
   };
 
   const buildResult = (
@@ -1752,23 +1805,33 @@ export default function Home() {
                       Choose what to talk about
                     </h3>
                     <p className="mt-1 max-w-2xl text-sm leading-6 text-white/55">
-                      Choose from structured conversation angles when video
-                      analysis is available. The final DM uses your choice and
-                      never copies the transcript.
+                      Review up to 8 suggestions, edit any detail, or write your
+                      own talking points. The final DM uses only the point you
+                      confirm and never copies the transcript.
                     </p>
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  onClick={findConversationAngles}
-                  disabled={!filledVideos || !allSelectedVideosAnalyzed}
-                  className="h-10 shrink-0 rounded-full bg-white px-5 font-black text-[#27322d] hover:bg-[#eaf4e8]"
-                >
-                  <Sparkles />
-                  {conversationAngles.length
-                    ? 'Refresh talking points'
-                    : 'Find talking points'}
-                </Button>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={addConversationAngle}
+                    disabled={!filledVideos}
+                    className="h-10 rounded-full bg-[#ff7768] px-4 font-black text-[#27322d] hover:bg-[#ff8d81]"
+                  >
+                    <Plus /> Add my own
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={findConversationAngles}
+                    disabled={!filledVideos || !allSelectedVideosAnalyzed}
+                    className="h-10 rounded-full bg-white px-4 font-black text-[#27322d] hover:bg-[#eaf4e8]"
+                  >
+                    <Sparkles />
+                    {conversationAngles.length
+                      ? 'Refresh suggestions'
+                      : 'Generate suggestions'}
+                  </Button>
+                </div>
               </div>
 
               {conversationAngles.length ? (
@@ -1783,41 +1846,101 @@ export default function Home() {
                     {conversationAngles.map((angle) => {
                       const selected =
                         anglesFresh && selectedAngleId === angle.id;
+                      const complete = Boolean(
+                        angle.title.trim() && angle.dmLead.trim(),
+                      );
                       return (
-                        <button
+                        <article
                           key={angle.id}
-                          type="button"
-                          aria-pressed={selected}
-                          onClick={() => {
-                            if (!anglesFresh) return;
-                            setSelectedAngleId(angle.id);
-                            setProductMatches([]);
-                            setSelectedProductId(null);
-                            setResult(null);
-                          }}
-                          className={`rounded-[18px] border p-4 text-left transition ${selected ? 'border-[#ff7768] bg-[#ff7768] text-[#27322d]' : 'border-white/12 bg-white/6 text-white hover:border-white/30 hover:bg-white/10'} ${anglesFresh ? '' : 'cursor-not-allowed opacity-55'}`}
+                          className={`rounded-[18px] border p-4 transition ${selected ? 'border-[#ff7768] bg-[#ff7768] text-[#27322d]' : 'border-white/12 bg-white/6 text-white'} ${anglesFresh ? '' : 'opacity-55'}`}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-black">{angle.title}</p>
-                              <p
-                                className={`mt-1 text-xs leading-5 ${selected ? 'text-[#27322d]/65' : 'text-white/55'}`}
-                              >
-                                {angle.summary}
-                              </p>
-                            </div>
-                            <span
-                              className={`grid size-6 shrink-0 place-items-center rounded-full border ${selected ? 'border-[#27322d] bg-[#27322d] text-white' : 'border-white/25'}`}
+                            <Badge
+                              className={`rounded-full ${selected ? 'bg-[#27322d] text-white' : 'bg-white/10 text-white'}`}
                             >
-                              {selected ? <Check className="size-3.5" /> : null}
-                            </span>
+                              {angle.id.startsWith('custom-angle-')
+                                ? 'Your point'
+                                : 'Suggested'}
+                            </Badge>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Delete talking point"
+                              onClick={() => removeConversationAngle(angle.id)}
+                              className={`size-8 rounded-full ${selected ? 'text-[#27322d] hover:bg-[#27322d]/10' : 'text-white/55 hover:bg-white/10 hover:text-white'}`}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
                           </div>
-                          <p
-                            className={`mt-3 border-t pt-3 text-[11px] leading-5 ${selected ? 'border-[#27322d]/15 text-[#27322d]/60' : 'border-white/10 text-white/40'}`}
+
+                          <label className="mt-3 block text-sm font-bold">
+                            Topic label
+                            <Input
+                              value={angle.title}
+                              disabled={!anglesFresh}
+                              onChange={(event) =>
+                                updateConversationAngle(
+                                  angle.id,
+                                  'title',
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="e.g. Their clear teaching style"
+                              className={`mt-1.5 h-10 border-0 ${selected ? 'bg-white/70 text-[#27322d] placeholder:text-[#27322d]/40' : 'bg-white/10 text-white placeholder:text-white/30'} focus-visible:ring-2 focus-visible:ring-white/40`}
+                            />
+                          </label>
+                          <label className="mt-3 block text-sm font-bold">
+                            What you noticed
+                            <Textarea
+                              value={angle.summary}
+                              disabled={!anglesFresh}
+                              onChange={(event) =>
+                                updateConversationAngle(
+                                  angle.id,
+                                  'summary',
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="Write the detail or insight you want to reference."
+                              className={`mt-1.5 min-h-[78px] resize-y border-0 ${selected ? 'bg-white/70 text-[#27322d] placeholder:text-[#27322d]/40' : 'bg-white/10 text-white placeholder:text-white/30'} focus-visible:ring-2 focus-visible:ring-white/40`}
+                            />
+                          </label>
+                          <label className="mt-3 block text-sm font-bold">
+                            Natural DM wording
+                            <Textarea
+                              value={angle.dmLead}
+                              disabled={!anglesFresh}
+                              onChange={(event) =>
+                                updateConversationAngle(
+                                  angle.id,
+                                  'dmLead',
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="e.g. how clearly you make a technical process easy to follow"
+                              className={`mt-1.5 min-h-[78px] resize-y border-0 ${selected ? 'bg-white/70 text-[#27322d] placeholder:text-[#27322d]/40' : 'bg-white/10 text-white placeholder:text-white/30'} focus-visible:ring-2 focus-visible:ring-white/40`}
+                            />
+                          </label>
+                          <Button
+                            type="button"
+                            aria-pressed={selected}
+                            disabled={!anglesFresh || !complete}
+                            onClick={() => {
+                              setSelectedAngleId(angle.id);
+                              resetAfterAngleChange();
+                            }}
+                            className={`mt-4 w-full rounded-full font-black ${selected ? 'bg-[#27322d] text-white hover:bg-[#27322d]' : 'bg-white text-[#27322d] hover:bg-[#eaf4e8]'}`}
                           >
-                            Why it works: {angle.whyItWorks}
-                          </p>
-                        </button>
+                            {selected ? (
+                              <>
+                                <Check /> Confirmed
+                              </>
+                            ) : (
+                              'Use this talking point'
+                            )}
+                          </Button>
+                        </article>
                       );
                     })}
                   </div>
@@ -1834,8 +1957,8 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="mt-5 rounded-[16px] border border-dashed border-white/15 px-4 py-5 text-center text-sm text-white/45">
-                  Review the scripts above, then find 3–4 paraphrased topics
-                  that would feel natural in a DM.
+                  Select at least one script, then add your own talking point or
+                  generate up to 8 editable suggestions.
                 </div>
               )}
             </section>
