@@ -1,8 +1,8 @@
 'use client';
+/* oxlint-disable next/no-html-link-for-pages -- Full document navigation avoids Vinext client-runtime duplication. */
 
 import { useEffect, useState } from 'react';
 import { ArrowRight, FlaskConical, ShieldCheck } from 'lucide-react';
-import Link from 'next/link';
 import {
   configuredCredentialCount,
   readDemoCredentials,
@@ -40,14 +40,14 @@ export function DemoModeBanner() {
             </p>
           </div>
         </div>
-        <Link
+        <a
           href="/demo-settings"
           className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[#27322d] px-4 text-sm font-bold text-white transition hover:bg-[#39463f]"
         >
           <ShieldCheck className="size-4" />
           Configure demo
           <ArrowRight className="size-4" />
-        </Link>
+        </a>
       </div>
     </section>
   );

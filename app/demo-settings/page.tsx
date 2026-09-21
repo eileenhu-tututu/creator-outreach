@@ -1,4 +1,5 @@
 'use client';
+/* oxlint-disable next/no-html-link-for-pages -- Full document navigation avoids Vinext client-runtime duplication. */
 
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -11,7 +12,6 @@ import {
   RotateCcw,
   ShieldCheck,
 } from 'lucide-react';
-import Link from 'next/link';
 import { BrandNav } from '@/components/brand-nav';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -238,12 +238,12 @@ export default function DemoSettingsPage() {
                 <li>2. Open Generator and collect a creator.</li>
                 <li>3. Match products and show the outreach result.</li>
               </ol>
-              <Link
+              <a
                 href="/"
                 className="mt-6 inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-[#27322d] px-4 text-sm font-bold text-white"
               >
                 <ArrowLeft className="size-4" /> Back to Generator
-              </Link>
+              </a>
             </article>
             <p className="px-2 text-xs leading-5 text-[#27322d]/50">
               Gmail OAuth remains separate because it requires a fixed Google
