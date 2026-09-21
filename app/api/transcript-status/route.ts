@@ -1,3 +1,5 @@
+import { requestCredential } from '@/lib/server-credentials';
+
 type SupadataTranscript = {
   content?: string | Array<{ text?: string }>;
   status?: 'queued' | 'active' | 'completed' | 'failed';
@@ -15,7 +17,11 @@ const transcriptText = (data: SupadataTranscript) =>
       : '';
 
 export async function POST(request: Request) {
-  const apiKey = process.env.SUPADATA_API_KEY;
+  const apiKey = requestCredential(
+    request,
+    'x-demo-supadata-api-key',
+    'SUPADATA_API_KEY',
+  );
   if (!apiKey) {
     return Response.json(
       { error: 'Add SUPADATA_API_KEY to check transcript jobs.' },

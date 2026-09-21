@@ -1,4 +1,5 @@
-import { generateGeminiJson, geminiApiKey } from '@/lib/gemini';
+import { generateGeminiJson } from '@/lib/gemini';
+import { requestCredential } from '@/lib/server-credentials';
 
 type CollectionSource = 'youtube-shorts' | 'tiktok';
 
@@ -329,7 +330,10 @@ type GeminiYouTubeResult = {
   }>;
 };
 
-async function analyzeYouTubeBatch(videos: YouTubeVideoItem[]) {
+async function analyzeYouTubeBatch(
+  videos: YouTubeVideoItem[],
+  geminiKey: string,
+) {
   const schema = {
     type: 'object',
     properties: {
@@ -395,15 +399,23 @@ async function analyzeYouTubeBatch(videos: YouTubeVideoItem[]) {
     text: 'Analyze every numbered Short above. Keep each result tied to its one-based index. Preserve spoken wording and visible wording rather than summarizing them. Do not invent missing speech or text. Score product-matching usefulness low for generic dance-only or trend-only clips.',
   });
 
-  return generateGeminiJson<GeminiYouTubeResult>({ parts, schema });
+  return generateGeminiJson<GeminiYouTubeResult>({
+    parts,
+    schema,
+    apiKey: geminiKey,
+  });
 }
 
-async function buildYouTubeVideos(sourceVideos: YouTubeVideoItem[]) {
+async function buildYouTubeVideos(
+  sourceVideos: YouTubeVideoItem[],
+  geminiKey: string,
+) {
   let geminiResults: GeminiYouTubeResult['videos'] = [];
   let analysisMessage = '';
   if (sourceVideos.length) {
     try {
-      geminiResults = (await analyzeYouTubeBatch(sourceVideos)).videos || [];
+      geminiResults =
+        (await analyzeYouTubeBatch(sourceVideos, geminiKey)).videos || [];
     } catch (error) {
       analysisMessage =
         error instanceof Error
@@ -459,7 +471,11 @@ async function buildYouTubeVideos(sourceVideos: YouTubeVideoItem[]) {
   return { videos, analysisMessage };
 }
 
-async function collectSingleYouTubeShort(videoId: string, youtubeKey: string) {
+async function collectSingleYouTubeShort(
+  videoId: string,
+  youtubeKey: string,
+  geminiKey: string,
+) {
   const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
   detailsUrl.search = new URLSearchParams({
     part: 'snippet,contentDetails',
@@ -482,7 +498,10 @@ async function collectSingleYouTubeShort(videoId: string, youtubeKey: string) {
     );
   }
 
-  const { videos, analysisMessage } = await buildYouTubeVideos([video]);
+  const { videos, analysisMessage } = await buildYouTubeVideos(
+    [video],
+    geminiKey,
+  );
   return Response.json({
     source: 'youtube-shorts',
     channel: {
@@ -499,10 +518,11 @@ async function collectYouTubeShorts(
   input: string,
   maxVideos: number,
   youtubeKey: string,
+  geminiKey: string,
 ) {
   const directVideoId = youtubeVideoId(input);
   if (directVideoId) {
-    return collectSingleYouTubeShort(directVideoId, youtubeKey);
+    return collectSingleYouTubeShort(directVideoId, youtubeKey, geminiKey);
   }
 
   const yt = 'https://www.googleapis.com/youtube/v3';
@@ -640,7 +660,10 @@ async function collectYouTubeShorts(
     )
     .slice(0, maxVideos);
 
-  const { videos, analysisMessage } = await buildYouTubeVideos(latest);
+  const { videos, analysisMessage } = await buildYouTubeVideos(
+    latest,
+    geminiKey,
+  );
 
   return Response.json({
     source: 'youtube-shorts',
@@ -776,8 +799,17 @@ export async function POST(request: Request) {
   }
 
   if (source === 'youtube-shorts') {
-    const youtubeKey = process.env.YOUTUBE_API_KEY;
-    if (!youtubeKey || !geminiApiKey()) {
+    const youtubeKey = requestCredential(
+      request,
+      'x-demo-youtube-api-key',
+      'YOUTUBE_API_KEY',
+    );
+    const geminiKey = requestCredential(
+      request,
+      'x-demo-gemini-api-key',
+      'GEMINI_API_KEY',
+    );
+    if (!youtubeKey || !geminiKey) {
       return Response.json(
         {
           error: 'integration_not_configured',
@@ -787,11 +819,15 @@ export async function POST(request: Request) {
         { status: 503 },
       );
     }
-    return collectYouTubeShorts(input, maxVideos, youtubeKey);
+    return collectYouTubeShorts(input, maxVideos, youtubeKey, geminiKey);
   }
 
   if (source === 'tiktok') {
-    const supadataKey = process.env.SUPADATA_API_KEY;
+    const supadataKey = requestCredential(
+      request,
+      'x-demo-supadata-api-key',
+      'SUPADATA_API_KEY',
+    );
     if (!supadataKey) {
       return Response.json(
         {

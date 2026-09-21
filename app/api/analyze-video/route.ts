@@ -1,9 +1,9 @@
 import {
   deleteGeminiFile,
   generateGeminiJson,
-  geminiApiKey,
   uploadGeminiVideo,
 } from '@/lib/gemini';
+import { requestCredential } from '@/lib/server-credentials';
 
 type VisualAnalysis = {
   onScreenText?: string[];
@@ -102,7 +102,12 @@ const normalize = (data: VisualAnalysis) => ({
 });
 
 export async function POST(request: Request) {
-  if (!geminiApiKey()) {
+  const geminiKey = requestCredential(
+    request,
+    'x-demo-gemini-api-key',
+    'GEMINI_API_KEY',
+  );
+  if (!geminiKey) {
     return Response.json(
       { error: 'Add GEMINI_API_KEY to read on-screen video text.' },
       { status: 503 },
@@ -140,7 +145,7 @@ export async function POST(request: Request) {
           { status: 413 },
         );
       }
-      const uploaded = await uploadGeminiVideo(file);
+      const uploaded = await uploadGeminiVideo(file, geminiKey);
       uploadedName = uploaded.name;
       videoPart = {
         file_data: {
@@ -177,6 +182,7 @@ export async function POST(request: Request) {
     const result = await generateGeminiJson<VisualAnalysis>({
       parts: [videoPart, { text: prompt }],
       schema,
+      apiKey: geminiKey,
     });
     return Response.json(normalize(result));
   } catch (error) {
@@ -190,6 +196,6 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   } finally {
-    if (uploadedName) await deleteGeminiFile(uploadedName);
+    if (uploadedName) await deleteGeminiFile(uploadedName, geminiKey);
   }
 }

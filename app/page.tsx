@@ -65,7 +65,9 @@ import {
   type CreatorProfile,
 } from '@/lib/creator-profile';
 import { BrandNav } from '@/components/brand-nav';
+import { DemoModeBanner } from '@/components/demo-mode-banner';
 import { OutreachStory } from '@/components/outreach-story';
+import { demoCredentialHeaders } from '@/lib/demo-credentials';
 
 const creatorImages = [
   'https://images.unsplash.com/photo-1620396748669-46bd3128ccce?w=720&h=1280&fit=crop&auto=format',
@@ -739,7 +741,10 @@ export default function Home() {
         await new Promise((resolve) => window.setTimeout(resolve, 1500));
         const response = await fetch('/api/transcript-status', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...demoCredentialHeaders(),
+          },
           body: JSON.stringify({ jobId: video.jobId }),
         });
         const data = (await response.json()) as {
@@ -813,7 +818,10 @@ export default function Home() {
         : JSON.stringify({ url: video.url });
       const response = await fetch('/api/analyze-video', {
         method: 'POST',
-        ...(file ? {} : { headers: { 'Content-Type': 'application/json' } }),
+        headers: {
+          ...demoCredentialHeaders(),
+          ...(file ? {} : { 'Content-Type': 'application/json' }),
+        },
         body: requestBody,
       });
       const data = (await response.json()) as {
@@ -900,7 +908,10 @@ export default function Home() {
       );
       const response = await fetch('/api/structure-video', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...demoCredentialHeaders(),
+        },
         body: JSON.stringify({
           title: video.title,
           description: video.description,
@@ -969,7 +980,10 @@ export default function Home() {
     try {
       const response = await fetch('/api/collect', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...demoCredentialHeaders(),
+        },
         body: JSON.stringify({
           source: collectionSource,
           input: collectionInput,
@@ -1224,6 +1238,7 @@ export default function Home() {
   return (
     <main className="app-shell min-h-screen bg-background text-foreground">
       <BrandNav active="generator" />
+      <DemoModeBanner />
       {celebration && (
         <output className="celebration-toast" aria-live="polite">
           <span aria-hidden="true">
@@ -1277,7 +1292,7 @@ export default function Home() {
                 Start creator scan <ArrowDown className="ml-1 size-4" />
               </Button>
               <span className="micro-note">
-                Private by default · editable at every step
+                Session-only API keys · editable at every step
               </span>
             </div>
           </div>

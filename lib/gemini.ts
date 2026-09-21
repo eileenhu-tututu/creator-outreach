@@ -30,11 +30,13 @@ const responseText = (data: GeminiResponse) =>
 export async function generateGeminiJson<T>({
   parts,
   schema,
+  apiKey,
 }: {
   parts: GeminiPart[];
   schema: Record<string, unknown>;
+  apiKey?: string;
 }): Promise<T> {
-  const key = geminiApiKey();
+  const key = apiKey?.trim() || geminiApiKey();
   if (!key) throw new Error('Add GEMINI_API_KEY to enable video analysis.');
 
   const response = await fetch(
@@ -87,8 +89,8 @@ type GeminiFileResponse = {
   error?: { message?: string };
 };
 
-export async function uploadGeminiVideo(file: File) {
-  const key = geminiApiKey();
+export async function uploadGeminiVideo(file: File, apiKey?: string) {
+  const key = apiKey?.trim() || geminiApiKey();
   if (!key) throw new Error('Add GEMINI_API_KEY to enable video analysis.');
 
   const mimeType = file.type || 'video/mp4';
@@ -161,8 +163,8 @@ export async function uploadGeminiVideo(file: File) {
   throw new Error('Gemini is still processing this video. Try again shortly.');
 }
 
-export async function deleteGeminiFile(name: string) {
-  const key = geminiApiKey();
+export async function deleteGeminiFile(name: string, apiKey?: string) {
+  const key = apiKey?.trim() || geminiApiKey();
   if (!key || !name) return;
   await fetch(`${apiRoot}/${name}`, {
     method: 'DELETE',

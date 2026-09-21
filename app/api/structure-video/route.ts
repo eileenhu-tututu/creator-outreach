@@ -2,7 +2,8 @@ import {
   normalizeCreatorProfile,
   type CreatorProfile,
 } from '@/lib/creator-profile';
-import { generateGeminiJson, geminiApiKey } from '@/lib/gemini';
+import { generateGeminiJson } from '@/lib/gemini';
+import { requestCredential } from '@/lib/server-credentials';
 
 const arrayProperty = (description: string) => ({
   type: 'array',
@@ -47,7 +48,12 @@ const schema = {
 };
 
 export async function POST(request: Request) {
-  if (!geminiApiKey()) {
+  const geminiKey = requestCredential(
+    request,
+    'x-demo-gemini-api-key',
+    'GEMINI_API_KEY',
+  );
+  if (!geminiKey) {
     return Response.json(
       { error: 'Add GEMINI_API_KEY to build a structured creator profile.' },
       { status: 503 },
@@ -90,6 +96,7 @@ export async function POST(request: Request) {
         },
       ],
       schema,
+      apiKey: geminiKey,
     });
     return Response.json({
       status: 'ready',
