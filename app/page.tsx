@@ -69,6 +69,7 @@ import {
 import { BrandNav } from '@/components/brand-nav';
 import { DemoModeBanner } from '@/components/demo-mode-banner';
 import { OutreachStory } from '@/components/outreach-story';
+import { creatorIdHash, trackAppOpened, trackEvent } from '@/lib/analytics';
 import { demoCredentialHeaders } from '@/lib/demo-credentials';
 import {
   archiveCreatorWorkspace,
@@ -209,6 +210,7 @@ export default function Home() {
   const [matchSignature, setMatchSignature] = useState('');
   const [result, setResult] = useState<Result | null>(null);
   const [resultEdited, setResultEdited] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [visibleWorkflowAnchor, setVisibleWorkflowAnchor] =
     useState('generator');
@@ -546,6 +548,10 @@ export default function Home() {
     customEmailHtml,
     customEmailCss,
   ]);
+
+  useEffect(() => {
+    trackAppOpened();
+  }, []);
 
   useEffect(() => {
     const restoreId = new URLSearchParams(window.location.search).get(
@@ -960,6 +966,7 @@ export default function Home() {
   ) => {
     if (!selectedMatch || selectedMatch.score < minimumProductMatchScore)
       return;
+    const generationStartedAt = performance.now();
     setGenerating(true);
     window.setTimeout(() => {
       const nextResult = buildResult(tone);
@@ -980,6 +987,13 @@ export default function Home() {
       setOutreachChannel('TikTok DM');
       setGenerating(false);
       setCelebration('message');
+      trackEvent('message_generated', {
+        run_id: activeRunId,
+        message_id: historyId,
+        creator_id_hash: creatorIdHash(username || collectionInput),
+        product_id: selectedMatch.product.id,
+        duration_ms: Math.round(performance.now() - generationStartedAt),
+      });
       window.setTimeout(() => setCelebration(null), 1800);
       writeOutreachHistory(
         [
@@ -1024,7 +1038,10 @@ export default function Home() {
     setCopied(null);
   };
 
-  const markCurrentAsSent = (channel: OutreachChannel = outreachChannel) => {
+  const markCurrentAsSent = (
+    channel: OutreachChannel = outreachChannel,
+    sendMethod: 'manual_mark' | 'gmail' = 'manual_mark',
+  ) => {
     if (!result || !activeHistoryId || activeSentAt) return;
     const sentAt = new Date().toISOString();
     updateOutreachHistoryItem(activeHistoryId, {
@@ -1040,6 +1057,14 @@ export default function Home() {
     });
     setActiveSentAt(sentAt);
     setOutreachChannel(channel);
+    trackEvent('outreach_sent', {
+      run_id: activeRunId,
+      message_id: activeHistoryId,
+      creator_id_hash: creatorIdHash(username || collectionInput),
+      product_id: selectedProductId,
+      channel: channel.toLowerCase().replaceAll(' ', '_'),
+      send_method: sendMethod,
+    });
     setSendMessage(
       `Marked as sent via ${channel}. Reply tracking is ready in History.`,
     );
@@ -1047,6 +1072,12 @@ export default function Home() {
 
   const copyText = async (key: string, value: string) => {
     await navigator.clipboard.writeText(value);
+    trackEvent('message_copied', {
+      run_id: activeRunId,
+      message_id: activeHistoryId,
+      creator_id_hash: creatorIdHash(username || collectionInput),
+      message_type: key,
+    });
     setResultEdited(true);
     setCopied(key);
     window.setTimeout(() => setCopied(null), 1400);
@@ -1355,6 +1386,27 @@ export default function Home() {
 
   const collectCreatorContent = async () => {
     if (!collectionInput.trim()) return;
+    const runId = crypto.randomUUID();
+    const collectionStartedAt = performance.now();
+    const creatorHash = creatorIdHash(collectionInput);
+    let transcriptEventSent = false;
+    const trackTranscriptCompleted = (videoCount: number) => {
+      if (transcriptEventSent || videoCount < 1) return;
+      transcriptEventSent = true;
+      trackEvent('transcript_completed', {
+        run_id: runId,
+        creator_id_hash: creatorHash,
+        source: collectionSource,
+        duration_ms: Math.round(performance.now() - collectionStartedAt),
+        video_count: videoCount,
+      });
+    };
+    setActiveRunId(runId);
+    trackEvent('creator_url_submitted', {
+      run_id: runId,
+      creator_id_hash: creatorHash,
+      source: collectionSource,
+    });
     setCollecting(true);
     setCollectionMessage(
       collectionSource === 'youtube-shorts'
@@ -1388,6 +1440,7 @@ export default function Home() {
       const ready = videos
         .filter((video) => video.status === 'ready' && videoScript(video))
         .filter((video) => video.qualityLabel !== 'skip');
+      trackTranscriptCompleted(ready.length);
       const mergedMap = new Map(
         (collectionSource === 'tiktok' ? collectedVideos : []).map(
           (video) => [video.id, video] as const,
@@ -1448,6 +1501,7 @@ export default function Home() {
             );
             completed += batch.length;
             successful += outcomes.filter(Boolean).length;
+            trackTranscriptCompleted(successful);
             setCollectionMessage(
               `Reading Shorts: ${completed}/${pending.length} finished · ${successful} usable so far.`,
             );
@@ -1535,7 +1589,7 @@ export default function Home() {
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || 'Send failed.');
-      markCurrentAsSent('Email');
+      markCurrentAsSent('Email', 'gmail');
       setSendMessage(
         'Email sent successfully. Reply tracking is ready in History.',
       );
