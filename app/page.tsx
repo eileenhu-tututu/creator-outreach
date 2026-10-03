@@ -69,7 +69,7 @@ import {
 import { BrandNav } from '@/components/brand-nav';
 import { DemoModeBanner } from '@/components/demo-mode-banner';
 import { OutreachStory } from '@/components/outreach-story';
-import { creatorIdHash, trackAppOpened, trackEvent } from '@/lib/analytics';
+import { creatorIdHash, trackEvent } from '@/lib/analytics';
 import { demoCredentialHeaders } from '@/lib/demo-credentials';
 import {
   archiveCreatorWorkspace,
@@ -548,10 +548,6 @@ export default function Home() {
     customEmailHtml,
     customEmailCss,
   ]);
-
-  useEffect(() => {
-    trackAppOpened();
-  }, []);
 
   useEffect(() => {
     const restoreId = new URLSearchParams(window.location.search).get(
