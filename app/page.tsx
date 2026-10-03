@@ -69,6 +69,16 @@ import { DemoModeBanner } from '@/components/demo-mode-banner';
 import { OutreachStory } from '@/components/outreach-story';
 import { demoCredentialHeaders } from '@/lib/demo-credentials';
 import {
+  archiveCreatorWorkspace,
+  readArchivedWorkspace,
+  readCurrentWorkspace,
+  writeCurrentWorkspace,
+  type CollectedVideo,
+  type CollectionSource,
+  type CreatorWorkspaceSnapshot,
+  type OutreachResult,
+} from '@/lib/creator-workspace';
+import {
   readOutreachHistory,
   updateOutreachHistoryItem,
   writeOutreachHistory,
@@ -84,48 +94,13 @@ const productImage =
   'https://images.unsplash.com/photo-1576188973526-0e5d7047b0cf?w=900&h=700&fit=crop&auto=format';
 const initialTranscripts = [''];
 
-type Result = {
-  score: number;
-  hook: string;
-  source: string;
-  evidence: string;
-  reason: string;
-  dm: string;
-  subject: string;
-  email: string;
-  persona: string[];
-};
+type Result = OutreachResult;
 type InlineEmailImage = {
   dataUrl: string;
   data: string;
   mimeType: string;
   filename: string;
   cid: string;
-};
-type CollectionSource = 'youtube-shorts' | 'tiktok';
-type CollectedVideo = {
-  id: string;
-  platform: CollectionSource;
-  title: string;
-  publishedAt?: string;
-  thumbnail?: string;
-  url: string;
-  transcript?: string;
-  status: 'ready' | 'processing' | 'failed';
-  jobId?: string;
-  description?: string;
-  qualityScore: number;
-  qualityLabel: 'strong' | 'review' | 'skip';
-  qualityReason: string;
-  visualText?: string[];
-  creatorSignals?: string[];
-  contentType?: string;
-  structuredProfile?: CreatorProfile;
-  visualStatus?: 'idle' | 'processing' | 'ready' | 'failed';
-  visualJobId?: string;
-  visualError?: string;
-  structureStatus?: 'idle' | 'processing' | 'ready' | 'failed';
-  structureJobId?: string;
 };
 const cleanHandle = (value: string) =>
   value.trim().replace(/^@/, '') || 'creator';
@@ -237,6 +212,7 @@ export default function Home() {
   const [structuringVideoIds, setStructuringVideoIds] = useState<string[]>([]);
   const [collecting, setCollecting] = useState(false);
   const [collectionMessage, setCollectionMessage] = useState('');
+  const [workspaceHydrated, setWorkspaceHydrated] = useState(false);
   const [emailRecipient, setEmailRecipient] = useState('');
   const [showHtml, setShowHtml] = useState(true);
   const [emailImageUrl, setEmailImageUrl] = useState('');
@@ -326,6 +302,56 @@ export default function Home() {
   const selectedMatch =
     productMatches.find((item) => item.product.id === selectedProductId) ||
     null;
+  const currentWorkspaceSnapshot = useMemo<CreatorWorkspaceSnapshot>(
+    () => ({
+      version: 1,
+      savedAt: new Date().toISOString(),
+      username,
+      bio,
+      collectionSource,
+      collectionInput,
+      collectedVideos,
+      selectedVideoIds,
+      transcripts,
+      conversationAngles,
+      selectedAngleId,
+      angleSignature,
+      productMatches,
+      selectedProductId,
+      matchSignature,
+      product,
+      description,
+      features,
+      commission,
+      freeSample,
+      result,
+      activeHistoryId,
+      activeSentAt,
+    }),
+    [
+      activeHistoryId,
+      activeSentAt,
+      angleSignature,
+      bio,
+      collectedVideos,
+      collectionInput,
+      collectionSource,
+      commission,
+      conversationAngles,
+      description,
+      features,
+      freeSample,
+      matchSignature,
+      product,
+      productMatches,
+      result,
+      selectedAngleId,
+      selectedProductId,
+      selectedVideoIds,
+      transcripts,
+      username,
+    ],
+  );
   const emailHtml = useMemo(() => {
     if (!result) return { preview: '', send: '' };
     const handle = cleanHandle(username);
@@ -416,6 +442,88 @@ export default function Home() {
     customEmailHtml,
     customEmailCss,
   ]);
+
+  useEffect(() => {
+    const restoreId = new URLSearchParams(window.location.search).get(
+      'restore',
+    );
+    const historyItem = restoreId
+      ? readOutreachHistory().find((item) => item.id === restoreId)
+      : undefined;
+    const saved = restoreId
+      ? readArchivedWorkspace(historyItem?.workspaceId)
+      : readCurrentWorkspace();
+
+    if (saved) {
+      setUsername(saved.username);
+      setBio(saved.bio);
+      setCollectionSource(saved.collectionSource);
+      setCollectionInput(saved.collectionInput);
+      setCollectedVideos(saved.collectedVideos);
+      setSelectedVideoIds(saved.selectedVideoIds);
+      setTranscripts(saved.transcripts.length ? saved.transcripts : ['']);
+      setConversationAngles(saved.conversationAngles);
+      setSelectedAngleId(saved.selectedAngleId);
+      setAngleSignature(saved.angleSignature);
+      setProductMatches(saved.productMatches);
+      setSelectedProductId(saved.selectedProductId);
+      setMatchSignature(saved.matchSignature);
+      setProduct(saved.product);
+      setDescription(saved.description);
+      setFeatures(saved.features);
+      setCommission(saved.commission);
+      setFreeSample(saved.freeSample);
+      setResult(
+        historyItem
+          ? {
+              score: historyItem.score,
+              hook: historyItem.hook,
+              source: saved.result?.source || 'Saved outreach history',
+              evidence: saved.result?.evidence || '',
+              reason: saved.result?.reason || '',
+              dm: historyItem.dm,
+              subject: historyItem.subject,
+              email: historyItem.email,
+              persona: saved.result?.persona || [],
+            }
+          : saved.result,
+      );
+      setActiveHistoryId(historyItem?.id || saved.activeHistoryId);
+      setActiveSentAt(historyItem?.sentAt || saved.activeSentAt);
+      if (historyItem?.sentChannel) setOutreachChannel(historyItem.sentChannel);
+      setCollectionMessage(
+        restoreId
+          ? 'Saved creator research restored. No API call was used.'
+          : 'Your last creator research was restored from this device.',
+      );
+    } else if (historyItem) {
+      setUsername(historyItem.username);
+      setProduct(historyItem.product);
+      setResult({
+        score: historyItem.score,
+        hook: historyItem.hook,
+        source: 'Saved outreach history',
+        evidence: '',
+        reason: '',
+        dm: historyItem.dm,
+        subject: historyItem.subject,
+        email: historyItem.email,
+        persona: [],
+      });
+      setActiveHistoryId(historyItem.id);
+      setActiveSentAt(historyItem.sentAt || null);
+      if (historyItem.sentChannel) setOutreachChannel(historyItem.sentChannel);
+      setCollectionMessage(
+        'The saved message was restored. This older record does not include its original video cache.',
+      );
+    }
+    setWorkspaceHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceHydrated) return;
+    writeCurrentWorkspace(currentWorkspaceSnapshot);
+  }, [currentWorkspaceSnapshot, workspaceHydrated]);
 
   useEffect(() => {
     let nextProducts = defaultProducts;
@@ -690,6 +798,15 @@ export default function Home() {
     window.setTimeout(() => {
       const nextResult = buildResult(tone);
       const historyId = crypto.randomUUID();
+      const nextWorkspace: CreatorWorkspaceSnapshot = {
+        ...currentWorkspaceSnapshot,
+        savedAt: new Date().toISOString(),
+        result: nextResult,
+        activeHistoryId: historyId,
+        activeSentAt: null,
+      };
+      const workspaceId = archiveCreatorWorkspace(nextWorkspace);
+      writeCurrentWorkspace(nextWorkspace);
       setResult(nextResult);
       setActiveHistoryId(historyId);
       setActiveSentAt(null);
@@ -704,6 +821,7 @@ export default function Home() {
             createdAt: new Date().toISOString(),
             username: cleanHandle(username),
             product,
+            workspaceId: workspaceId || undefined,
             ...nextResult,
           },
           ...readOutreachHistory(),
@@ -1058,9 +1176,8 @@ export default function Home() {
       });
       const merged = Array.from(mergedMap.values()).slice(-8);
       const availableIds = new Set(merged.map((video) => video.id));
-      const nextSelected = [
-        ...selectedVideoIds.filter((id) => availableIds.has(id)),
-      ]
+      const nextSelected = selectedVideoIds
+        .filter((id) => availableIds.has(id))
         .filter((id, index, ids) => ids.indexOf(id) === index)
         .slice(0, 8);
       setCollectedVideos(merged);
@@ -1522,9 +1639,12 @@ export default function Home() {
             </div>
             <div className="mt-6 rounded-[18px] bg-black p-4 text-white">
               <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                <div className="flex items-center gap-2 text-sm font-bold">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
                   <Video className="size-4 text-[#ff5400]" /> Multi-channel
                   collection
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white/8 px-2 py-1 text-[10px] font-semibold text-white/55">
+                    <ShieldCheck className="size-3" /> Auto-saved on this device
+                  </span>
                 </div>
                 <fieldset className="flex w-fit rounded-full bg-white/8 p-1">
                   <legend className="sr-only">Collection source</legend>

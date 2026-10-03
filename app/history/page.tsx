@@ -161,7 +161,13 @@ export default function HistoryPage() {
                       <p className="mt-3 line-clamp-2 text-sm leading-6 text-[#27322d]/55">
                         {item.dm}
                       </p>
-                      <div className="mt-4 flex gap-2">
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <a
+                          href={`/?restore=${encodeURIComponent(item.id)}`}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#27322d] px-3 text-xs font-bold text-white transition hover:bg-[#39463f]"
+                        >
+                          <ArrowUpRight className="size-3.5" /> Restore research
+                        </a>
                         <Button
                           onClick={() => navigator.clipboard.writeText(item.dm)}
                           variant="outline"

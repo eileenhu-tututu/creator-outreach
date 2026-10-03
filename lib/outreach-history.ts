@@ -30,6 +30,7 @@ export type OutreachHistoryItem = {
   sentChannel?: OutreachChannel;
   replyStatus?: ReplyStatus;
   replyRecordedAt?: string;
+  workspaceId?: string;
 };
 
 export const replyStatusLabels: Record<ReplyStatus, string> = {
