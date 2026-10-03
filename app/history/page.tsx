@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { BrandNav } from '@/components/brand-nav';
+import { creatorIdHash, trackEvent } from '@/lib/analytics';
 import {
   noReplyAvailability,
   readOutreachHistory,
@@ -39,6 +40,20 @@ const statusTone: Record<ReplyStatus, string> = {
   neutral: 'bg-[#ffe7a8] text-[#5d4300]',
   negative: 'bg-[#ffd2cd] text-[#7c2319]',
   collaboration_started: 'bg-[#ff7768] text-[#27322d]',
+};
+
+const replyTypes: ReplyStatus[] = [
+  'positive',
+  'neutral',
+  'negative',
+  'collaboration_started',
+];
+
+const daysSince = (value?: string) => {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return 0;
+  return Number((Math.max(0, Date.now() - timestamp) / 86_400_000).toFixed(1));
 };
 
 export default function HistoryPage() {
@@ -70,13 +85,32 @@ export default function HistoryPage() {
       items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
     );
 
-  const markSent = (item: OutreachHistoryItem) =>
+  const markSent = (item: OutreachHistoryItem) => {
     update(item.id, {
       sentAt: new Date().toISOString(),
       sentChannel: item.sentChannel || 'Other',
       replyStatus: 'pending',
       replyRecordedAt: undefined,
     });
+    trackEvent('outreach_sent', {
+      run_id: item.runId,
+      message_id: item.id,
+      creator_id_hash: creatorIdHash(item.username),
+      product_id: item.productId,
+      channel: (item.sentChannel || 'Other').toLowerCase().replaceAll(' ', '_'),
+      send_method: 'manual_mark',
+    });
+  };
+
+  const copyDm = async (item: OutreachHistoryItem) => {
+    await navigator.clipboard.writeText(item.dm);
+    trackEvent('message_copied', {
+      run_id: item.runId,
+      message_id: item.id,
+      creator_id_hash: creatorIdHash(item.username),
+      message_type: 'dm',
+    });
+  };
 
   const updateReplyStatus = (
     item: OutreachHistoryItem,
@@ -84,6 +118,24 @@ export default function HistoryPage() {
   ) => {
     if (status === 'no_reply' && !noReplyAvailability(item.sentAt).eligible)
       return;
+    if ((item.replyStatus || 'pending') === status) return;
+    const previousWasReply = replyTypes.includes(item.replyStatus || 'pending');
+    const nextIsReply = replyTypes.includes(status);
+    if (nextIsReply && !previousWasReply) {
+      trackEvent('reply_recorded', {
+        run_id: item.runId,
+        message_id: item.id,
+        reply_type: status === 'collaboration_started' ? 'positive' : status,
+        days_to_reply: daysSince(item.sentAt),
+      });
+    }
+    if (status === 'collaboration_started') {
+      trackEvent('collaboration_started', {
+        run_id: item.runId,
+        message_id: item.id,
+        product_id: item.productId,
+      });
+    }
     update(item.id, {
       replyStatus: status,
       replyRecordedAt:
@@ -172,7 +224,7 @@ export default function HistoryPage() {
                             : 'Restore saved message'}
                         </a>
                         <Button
-                          onClick={() => navigator.clipboard.writeText(item.dm)}
+                          onClick={() => void copyDm(item)}
                           variant="outline"
                           size="sm"
                           className="rounded-full border-[#27322d]/15 bg-white text-[#27322d]"

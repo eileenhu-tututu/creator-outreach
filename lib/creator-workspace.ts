@@ -66,6 +66,7 @@ export type CreatorWorkspaceSnapshot = {
   commission: string;
   freeSample: boolean;
   result: OutreachResult | null;
+  activeRunId?: string | null;
   activeHistoryId: string | null;
   activeSentAt: string | null;
 };

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowRight,
@@ -119,6 +119,46 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+
+const analyticsErrorCode = (error: unknown, fallback: string) => {
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  if (/credential|api key|unauthorized|forbidden/.test(message))
+    return 'CREDENTIAL_ERROR';
+  if (/quota|rate limit|too many requests/.test(message)) return 'RATE_LIMIT';
+  if (/timeout|timed out/.test(message)) return 'TIMEOUT';
+  if (/transcript|caption/.test(message)) return 'TRANSCRIPT_UNAVAILABLE';
+  return fallback;
+};
+
+const normalizedEditRatio = (original: string, edited: string) => {
+  if (original === edited) return 0;
+  if (!original.length || !edited.length) return 1;
+  const previous = Array.from(
+    { length: edited.length + 1 },
+    (_, index) => index,
+  );
+  for (
+    let originalIndex = 1;
+    originalIndex <= original.length;
+    originalIndex += 1
+  ) {
+    let diagonal = previous[0];
+    previous[0] = originalIndex;
+    for (let editedIndex = 1; editedIndex <= edited.length; editedIndex += 1) {
+      const above = previous[editedIndex];
+      previous[editedIndex] =
+        original[originalIndex - 1] === edited[editedIndex - 1]
+          ? diagonal
+          : Math.min(diagonal, above, previous[editedIndex - 1]) + 1;
+      diagonal = above;
+    }
+  }
+  return Number(
+    (
+      previous[edited.length] / Math.max(original.length, edited.length)
+    ).toFixed(3),
+  );
+};
 const safeHttpUrl = (value: string) => {
   try {
     const input = value.trim();
@@ -211,6 +251,8 @@ export default function Home() {
   const [result, setResult] = useState<Result | null>(null);
   const [resultEdited, setResultEdited] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const generatedResultRef = useRef<Result | null>(null);
+  const trackedEditedMessageIdsRef = useRef(new Set<string>());
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [visibleWorkflowAnchor, setVisibleWorkflowAnchor] =
     useState('generator');
@@ -431,11 +473,13 @@ export default function Home() {
       commission,
       freeSample,
       result,
+      activeRunId,
       activeHistoryId,
       activeSentAt,
     }),
     [
       activeHistoryId,
+      activeRunId,
       activeSentAt,
       angleSignature,
       bio,
@@ -579,21 +623,29 @@ export default function Home() {
       setFeatures(saved.features);
       setCommission(saved.commission);
       setFreeSample(saved.freeSample);
-      setResult(
-        historyItem
-          ? {
-              score: historyItem.score,
-              hook: historyItem.hook,
-              source: saved.result?.source || 'Saved outreach history',
-              evidence: saved.result?.evidence || '',
-              reason: saved.result?.reason || '',
-              dm: historyItem.dm,
-              subject: historyItem.subject,
-              email: historyItem.email,
-              persona: saved.result?.persona || [],
-            }
-          : saved.result,
-      );
+      const restoredResult = historyItem
+        ? {
+            score: historyItem.score,
+            hook: historyItem.hook,
+            source: saved.result?.source || 'Saved outreach history',
+            evidence: saved.result?.evidence || '',
+            reason: saved.result?.reason || '',
+            dm: historyItem.dm,
+            subject: historyItem.subject,
+            email: historyItem.email,
+            persona: saved.result?.persona || [],
+          }
+        : saved.result;
+      setResult(restoredResult);
+      generatedResultRef.current = restoredResult
+        ? {
+            ...restoredResult,
+            dm: historyItem?.generatedDm || restoredResult.dm,
+            subject: historyItem?.generatedSubject || restoredResult.subject,
+            email: historyItem?.generatedEmail || restoredResult.email,
+          }
+        : null;
+      setActiveRunId(historyItem?.runId || saved.activeRunId || null);
       setActiveHistoryId(historyItem?.id || saved.activeHistoryId);
       setActiveSentAt(historyItem?.sentAt || saved.activeSentAt);
       if (historyItem?.sentChannel) setOutreachChannel(historyItem.sentChannel);
@@ -605,7 +657,7 @@ export default function Home() {
     } else if (historyItem) {
       setUsername(historyItem.username);
       setProduct(historyItem.product);
-      setResult({
+      const restoredResult: Result = {
         score: historyItem.score,
         hook: historyItem.hook,
         source: 'Saved outreach history',
@@ -615,7 +667,15 @@ export default function Home() {
         subject: historyItem.subject,
         email: historyItem.email,
         persona: [],
-      });
+      };
+      setResult(restoredResult);
+      generatedResultRef.current = {
+        ...restoredResult,
+        dm: historyItem.generatedDm || restoredResult.dm,
+        subject: historyItem.generatedSubject || restoredResult.subject,
+        email: historyItem.generatedEmail || restoredResult.email,
+      };
+      setActiveRunId(historyItem.runId || null);
       setActiveHistoryId(historyItem.id);
       setActiveSentAt(historyItem.sentAt || null);
       if (historyItem.sentChannel) setOutreachChannel(historyItem.sentChannel);
@@ -945,11 +1005,22 @@ export default function Home() {
       setMatchSignature(creatorSignature);
       if (ranked[0]?.score >= minimumProductMatchScore) {
         chooseProduct(ranked[0]);
+        trackEvent('product_matched', {
+          run_id: activeRunId,
+          creator_id_hash: creatorIdHash(username || collectionInput),
+          product_id: ranked[0].product.id,
+          match_score: ranked[0].score,
+        });
       } else {
         setSelectedProductId(null);
         setResult(null);
         setActiveHistoryId(null);
         setActiveSentAt(null);
+        trackEvent('analysis_failed', {
+          run_id: activeRunId,
+          stage: 'product_match',
+          error_code: 'NO_ELIGIBLE_PRODUCT',
+        });
       }
       setMatchingProducts(false);
       setCelebration('match');
@@ -977,6 +1048,8 @@ export default function Home() {
       const workspaceId = archiveCreatorWorkspace(nextWorkspace);
       writeCurrentWorkspace(nextWorkspace);
       setResult(nextResult);
+      generatedResultRef.current = nextResult;
+      trackedEditedMessageIdsRef.current.delete(historyId);
       setResultEdited(false);
       setActiveHistoryId(historyId);
       setActiveSentAt(null);
@@ -995,10 +1068,15 @@ export default function Home() {
         [
           {
             id: historyId,
+            runId: activeRunId || undefined,
+            productId: selectedMatch.product.id,
             createdAt: new Date().toISOString(),
             username: cleanHandle(username),
             product,
             workspaceId: workspaceId || undefined,
+            generatedDm: nextResult.dm,
+            generatedSubject: nextResult.subject,
+            generatedEmail: nextResult.email,
             ...nextResult,
           },
           ...readOutreachHistory(),
@@ -1034,6 +1112,25 @@ export default function Home() {
     setCopied(null);
   };
 
+  const trackMessageEditIfNeeded = () => {
+    if (!result || !activeHistoryId) return;
+    if (trackedEditedMessageIdsRef.current.has(activeHistoryId)) return;
+    const generated = generatedResultRef.current;
+    if (!generated) return;
+    const editRatio = normalizedEditRatio(
+      `${generated.dm}\n${generated.subject}\n${generated.email}`,
+      `${result.dm}\n${result.subject}\n${result.email}`,
+    );
+    if (editRatio <= 0) return;
+    trackEvent('message_edited', {
+      run_id: activeRunId,
+      message_id: activeHistoryId,
+      product_id: selectedProductId,
+      edit_ratio: editRatio,
+    });
+    trackedEditedMessageIdsRef.current.add(activeHistoryId);
+  };
+
   const markCurrentAsSent = (
     channel: OutreachChannel = outreachChannel,
     sendMethod: 'manual_mark' | 'gmail' = 'manual_mark',
@@ -1053,6 +1150,7 @@ export default function Home() {
     });
     setActiveSentAt(sentAt);
     setOutreachChannel(channel);
+    trackMessageEditIfNeeded();
     trackEvent('outreach_sent', {
       run_id: activeRunId,
       message_id: activeHistoryId,
@@ -1068,13 +1166,13 @@ export default function Home() {
 
   const copyText = async (key: string, value: string) => {
     await navigator.clipboard.writeText(value);
+    trackMessageEditIfNeeded();
     trackEvent('message_copied', {
       run_id: activeRunId,
       message_id: activeHistoryId,
       creator_id_hash: creatorIdHash(username || collectionInput),
       message_type: key,
     });
-    setResultEdited(true);
     setCopied(key);
     window.setTimeout(() => setCopied(null), 1400);
   };
@@ -1116,7 +1214,14 @@ export default function Home() {
           status?: 'ready' | 'processing' | 'failed';
           transcript?: string;
         };
-        if (!response.ok) return;
+        if (!response.ok) {
+          trackEvent('analysis_failed', {
+            run_id: activeRunId,
+            stage: 'transcript',
+            error_code: 'TRANSCRIPT_STATUS_FAILED',
+          });
+          return;
+        }
         if (data.status === 'processing') continue;
         if (data.status === 'ready' && data.transcript) {
           const readyVideo: CollectedVideo = {
@@ -1159,7 +1264,12 @@ export default function Home() {
         }
         return;
       }
-    } catch {
+    } catch (error) {
+      trackEvent('analysis_failed', {
+        run_id: activeRunId,
+        stage: 'transcript',
+        error_code: analyticsErrorCode(error, 'TRANSCRIPT_STATUS_FAILED'),
+      });
       setCollectionMessage(
         'The script status could not be checked. Try “Check transcript” again.',
       );
@@ -1295,6 +1405,11 @@ export default function Home() {
     } catch (error) {
       const failureMessage =
         error instanceof Error ? error.message : 'Screen-text analysis failed.';
+      trackEvent('analysis_failed', {
+        run_id: activeRunId,
+        stage: 'screen_text',
+        error_code: analyticsErrorCode(error, 'SCREEN_TEXT_FAILED'),
+      });
       setCollectedVideos(visualFailureUpdater(video.id, failureMessage));
       if (!background) setCollectionMessage(failureMessage);
       return false;
@@ -1357,7 +1472,13 @@ export default function Home() {
       setCollectionMessage(
         'Gemini structured the existing script and screen text without changing either source.',
       );
+      return true;
     } catch (error) {
+      trackEvent('analysis_failed', {
+        run_id: activeRunId,
+        stage: 'creator_insight',
+        error_code: analyticsErrorCode(error, 'CREATOR_INSIGHT_FAILED'),
+      });
       setCollectedVideos((current) =>
         current.map((item) =>
           item.id === video.id ? { ...item, structureStatus: 'failed' } : item,
@@ -1366,18 +1487,29 @@ export default function Home() {
       setCollectionMessage(
         error instanceof Error ? error.message : 'Structured analysis failed.',
       );
+      return false;
     } finally {
       finish();
     }
   };
 
   const analyzeSelectedStructures = async () => {
+    const startedAt = performance.now();
     const selectedVideos = selectedVideoIds
       .map((id) => collectedVideos.find((video) => video.id === id))
       .filter((video): video is CollectedVideo => Boolean(video));
-    await Promise.all(
+    const outcomes = await Promise.all(
       selectedVideos.map((video) => analyzeVideoStructure(video)),
     );
+    const successful = outcomes.filter(Boolean).length;
+    if (successful > 0) {
+      trackEvent('creator_insight_generated', {
+        run_id: activeRunId,
+        creator_id_hash: creatorIdHash(username || collectionInput),
+        duration_ms: Math.round(performance.now() - startedAt),
+        video_count: successful,
+      });
+    }
   };
 
   const collectCreatorContent = async () => {
@@ -1523,6 +1655,11 @@ export default function Home() {
         );
       }
     } catch (error) {
+      trackEvent('analysis_failed', {
+        run_id: runId,
+        stage: 'collection',
+        error_code: analyticsErrorCode(error, 'COLLECTION_FAILED'),
+      });
       setCollectionMessage(
         error instanceof Error ? error.message : 'Collection failed.',
       );
@@ -1688,6 +1825,14 @@ export default function Home() {
           aria-pressed={selected}
           disabled={!anglesFresh || !complete}
           onClick={() => {
+            if (selectedAngleId !== angle.id) {
+              trackEvent('conversation_angle_selected', {
+                run_id: activeRunId,
+                angle_source: angle.id.startsWith('custom-angle-')
+                  ? 'custom'
+                  : 'system',
+              });
+            }
             setSelectedAngleId(angle.id);
             resetAfterAngleChange();
           }}

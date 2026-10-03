@@ -18,6 +18,8 @@ export type ReplyStatus =
 
 export type OutreachHistoryItem = {
   id: string;
+  runId?: string;
+  productId?: string;
   createdAt: string;
   username: string;
   product: string;
@@ -26,6 +28,9 @@ export type OutreachHistoryItem = {
   dm: string;
   subject: string;
   email: string;
+  generatedDm?: string;
+  generatedSubject?: string;
+  generatedEmail?: string;
   sentAt?: string;
   sentChannel?: OutreachChannel;
   replyStatus?: ReplyStatus;
