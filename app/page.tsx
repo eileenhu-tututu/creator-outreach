@@ -837,6 +837,25 @@ export default function Home() {
     }, 650);
   };
 
+  const updateResultCopy = (
+    field: 'dm' | 'subject' | 'email',
+    value: string,
+  ) => {
+    setResult((current) =>
+      current ? { ...current, [field]: value } : current,
+    );
+    if (activeHistoryId) {
+      updateOutreachHistoryItem(activeHistoryId, { [field]: value });
+    }
+  };
+
+  const rewriteCurrentDm = (tone: 'shorter' | 'casual' | 'soft') => {
+    if (!result) return;
+    const rewrittenDm = buildResult(tone).dm;
+    updateResultCopy('dm', rewrittenDm);
+    setCopied(null);
+  };
+
   const markCurrentAsSent = (channel: OutreachChannel = outreachChannel) => {
     if (!result || !activeHistoryId || activeSentAt) return;
     const sentAt = new Date().toISOString();
@@ -2576,9 +2595,16 @@ export default function Home() {
                 </div>
                 <Textarea
                   value={result.dm}
-                  onChange={(e) => setResult({ ...result, dm: e.target.value })}
-                  className="min-h-[180px] resize-none rounded-[18px] border-0 bg-[#f1f0ed] p-5 text-base leading-7 text-black focus-visible:ring-2 focus-visible:ring-[#ff5400]"
+                  onChange={(e) => updateResultCopy('dm', e.target.value)}
+                  aria-label="Editable TikTok or Instagram direct message"
+                  className="min-h-[180px] resize-y rounded-[18px] border border-black/10 bg-[#f1f0ed] p-5 text-base leading-7 text-black focus-visible:border-[#ff5400] focus-visible:ring-2 focus-visible:ring-[#ff5400]/25"
                 />
+                <div className="mt-2 flex items-center justify-between gap-3 text-xs text-black/45">
+                  <span>
+                    Edit directly — your changes are saved automatically.
+                  </span>
+                  <span>{result.dm.length} characters</span>
+                </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {[
                     ['Shorter', 'shorter'],
@@ -2588,7 +2614,7 @@ export default function Home() {
                     <Button
                       key={tone}
                       onClick={() =>
-                        generate(tone as 'shorter' | 'casual' | 'soft')
+                        rewriteCurrentDm(tone as 'shorter' | 'casual' | 'soft')
                       }
                       variant="outline"
                       className="rounded-full border-black/10 bg-transparent text-black hover:bg-black hover:text-white"
@@ -2648,7 +2674,7 @@ export default function Home() {
                     value={result.subject}
                     maxLength={200}
                     onChange={(e) =>
-                      setResult({ ...result, subject: e.target.value })
+                      updateResultCopy('subject', e.target.value)
                     }
                     placeholder="Write a custom email subject"
                     className="mt-3 h-11 border-black/10 bg-white px-3 text-base font-bold text-black shadow-none focus-visible:border-[#ff5400] focus-visible:ring-2 focus-visible:ring-[#ff5400]/20"
@@ -2674,9 +2700,7 @@ export default function Home() {
                   </div>
                   <Textarea
                     value={result.email}
-                    onChange={(e) =>
-                      setResult({ ...result, email: e.target.value })
-                    }
+                    onChange={(e) => updateResultCopy('email', e.target.value)}
                     className="min-h-[260px] resize-none rounded-[18px] border-0 bg-[#f1f0ed] p-5 text-[15px] leading-7 text-black focus-visible:ring-2 focus-visible:ring-[#ff5400]"
                   />
                 </div>
