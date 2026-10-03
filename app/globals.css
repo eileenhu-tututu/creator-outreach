@@ -29,7 +29,7 @@ html { scroll-behavior: smooth; background: var(--background); }
 body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-geist-sans), Inter, Arial, sans-serif; }
 button, input, textarea { font: inherit; } button { cursor: pointer; } ::selection { background: var(--coral); color: var(--ink); }
 
-.app-shell { position: relative; overflow: hidden; padding-top: 72px; background: radial-gradient(circle at 8% 3%, rgba(221,208,255,.52), transparent 30rem), radial-gradient(circle at 94% 18%, rgba(255,183,173,.35), transparent 32rem), linear-gradient(180deg, #f5f8f2 0%, #fffefa 40%, #edf5eb 100%); }
+.app-shell { position: relative; overflow-x: clip; padding-top: 72px; background: radial-gradient(circle at 8% 3%, rgba(221,208,255,.52), transparent 30rem), radial-gradient(circle at 94% 18%, rgba(255,183,173,.35), transparent 32rem), linear-gradient(180deg, #f5f8f2 0%, #fffefa 40%, #edf5eb 100%); }
 .app-shell::before { position: absolute; inset: 72px 0 auto; height: 680px; background-image: linear-gradient(rgba(39,50,45,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(39,50,45,.035) 1px, transparent 1px); background-size: 32px 32px; content: ''; pointer-events: none; mask-image: linear-gradient(to bottom, #000, transparent); }
 .brand-nav { position: fixed; inset: 0 0 auto; z-index: 50; width: 100%; border-bottom: 1px solid rgba(39,50,45,.08); background: rgba(248,251,246,.86); color: var(--ink); backdrop-filter: blur(18px); }
 .brand-mark { position: relative; display: grid; width: 40px; height: 40px; place-items: center; border-radius: 14px; background: var(--coral); color: var(--ink); box-shadow: 0 8px 28px rgba(255,119,104,.28); }

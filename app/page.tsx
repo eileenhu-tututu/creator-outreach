@@ -16,6 +16,8 @@ import {
   Mail,
   MessageCircle,
   PackageSearch,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   ScanText,
@@ -207,6 +209,9 @@ export default function Home() {
   const [matchSignature, setMatchSignature] = useState('');
   const [result, setResult] = useState<Result | null>(null);
   const [resultEdited, setResultEdited] = useState(false);
+  const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [visibleWorkflowAnchor, setVisibleWorkflowAnchor] =
+    useState('generator');
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [activeSentAt, setActiveSentAt] = useState<string | null>(null);
   const [outreachChannel, setOutreachChannel] =
@@ -393,6 +398,14 @@ export default function Home() {
     firstIncompleteWorkflowStep === -1
       ? workflowSteps.length - 1
       : firstIncompleteWorkflowStep;
+  const visibleWorkflowStep =
+    {
+      generator: Math.min(currentWorkflowStep, 1),
+      'creator-insights': 2,
+      'conversation-angles': 3,
+      'product-match': 4,
+      results: Math.min(7, Math.max(5, currentWorkflowStep)),
+    }[visibleWorkflowAnchor] ?? currentWorkflowStep;
   const currentWorkspaceSnapshot = useMemo<CreatorWorkspaceSnapshot>(
     () => ({
       version: 1,
@@ -615,6 +628,42 @@ export default function Home() {
     if (!workspaceHydrated) return;
     writeCurrentWorkspace(currentWorkspaceSnapshot);
   }, [currentWorkspaceSnapshot, workspaceHydrated]);
+
+  useEffect(() => {
+    const anchors = [
+      'generator',
+      'creator-insights',
+      'conversation-angles',
+      'product-match',
+      'results',
+    ];
+    let frame = 0;
+    const updateVisibleStep = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const readingLine = window.scrollY + Math.min(180, innerHeight * 0.28);
+        let nextAnchor = anchors[0];
+        for (const anchor of anchors) {
+          const element = document.getElementById(anchor);
+          const elementTop = element
+            ? element.getBoundingClientRect().top + window.scrollY
+            : Number.POSITIVE_INFINITY;
+          if (elementTop <= readingLine) nextAnchor = anchor;
+        }
+        setVisibleWorkflowAnchor((current) =>
+          current === nextAnchor ? current : nextAnchor,
+        );
+      });
+    };
+    updateVisibleStep();
+    window.addEventListener('scroll', updateVisibleStep, { passive: true });
+    window.addEventListener('resize', updateVisibleStep);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', updateVisibleStep);
+      window.removeEventListener('resize', updateVisibleStep);
+    };
+  }, []);
 
   useEffect(() => {
     let nextProducts = defaultProducts;
@@ -1607,25 +1656,34 @@ export default function Home() {
       <DemoModeBanner />
       <aside
         aria-label="Creator outreach workflow"
-        className="fixed right-4 top-24 z-40 hidden w-[244px] translate-x-[198px] rounded-[24px] border border-black/10 bg-white/90 p-4 shadow-[0_18px_60px_rgba(39,50,45,.16)] backdrop-blur-xl transition-transform duration-300 hover:translate-x-0 xl:block 2xl:translate-x-0"
+        className={`fixed right-3 top-24 z-40 hidden max-h-[calc(100vh-7rem)] w-[210px] overflow-y-auto rounded-[20px] border border-black/10 bg-white/94 p-3 shadow-[0_16px_48px_rgba(39,50,45,.14)] backdrop-blur-xl transition-transform duration-300 xl:block ${workflowOpen ? 'translate-x-0' : 'translate-x-[158px]'}`}
       >
+        <button
+          type="button"
+          aria-label={workflowOpen ? 'Collapse workflow' : 'Open workflow'}
+          aria-expanded={workflowOpen}
+          onClick={() => setWorkflowOpen((current) => !current)}
+          className="absolute left-1.5 top-2.5 z-20 grid size-9 place-items-center rounded-full border border-black/10 bg-[#27322d] text-white shadow-md transition hover:bg-[#ff7768] hover:text-[#27322d]"
+        >
+          {workflowOpen ? (
+            <PanelRightClose className="size-4" />
+          ) : (
+            <PanelRightOpen className="size-4" />
+          )}
+        </button>
         <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[.16em] text-black/40">
+          <div className="min-w-0 pl-11">
+            <p className="text-[9px] font-black uppercase tracking-[.13em] text-black/40">
               Your workflow
             </p>
-            <p className="mt-1 text-sm font-black text-[#27322d]">
+            <p className="mt-0.5 text-xs font-black text-[#27322d]">
               Step {currentWorkflowStep + 1} of {workflowSteps.length}
             </p>
           </div>
-          <span className="grid size-9 place-items-center rounded-full bg-[#ddd0ff] text-xs font-black text-[#27322d]">
-            {workflowSteps.filter((step) => step.complete).length}/
-            {workflowSteps.length}
-          </span>
         </div>
-        <ol className="space-y-1">
+        <ol className="space-y-0.5">
           {workflowSteps.map((step, index) => {
-            const current = index === currentWorkflowStep;
+            const current = index === visibleWorkflowStep;
             return (
               <li key={step.label} className="relative">
                 {index < workflowSteps.length - 1 ? (
@@ -1637,7 +1695,18 @@ export default function Home() {
                 <a
                   href={step.href}
                   aria-current={current ? 'step' : undefined}
-                  className={`flex min-h-9 items-center gap-2.5 rounded-xl px-1.5 py-1.5 text-[11px] font-bold transition ${current ? 'bg-[#eef5eb] text-[#27322d]' : 'text-[#27322d]/55 hover:bg-black/[.035] hover:text-[#27322d]'}`}
+                  onClick={(event) => {
+                    if (!step.href.startsWith('#')) return;
+                    event.preventDefault();
+                    const anchor = step.href.slice(1);
+                    const target = document.getElementById(anchor);
+                    if (!target) return;
+                    const top =
+                      target.getBoundingClientRect().top + window.scrollY - 92;
+                    window.scrollTo({ top, behavior: 'smooth' });
+                    setVisibleWorkflowAnchor(anchor);
+                  }}
+                  className={`flex min-h-8 items-center gap-2 rounded-lg px-1 py-1 text-[10px] font-bold transition ${current ? 'bg-[#eef5eb] text-[#27322d] ring-1 ring-[#71a77c]/25' : 'text-[#27322d]/55 hover:bg-black/[.035] hover:text-[#27322d]'}`}
                 >
                   <span
                     className={`relative z-10 grid size-6 shrink-0 place-items-center rounded-full border text-[9px] font-black ${step.complete ? 'border-[#71a77c] bg-[#dff3df] text-[#32633c]' : current ? 'border-[#ff7768] bg-[#ffe0db] text-[#9e392f]' : 'border-black/10 bg-white text-black/35'}`}
@@ -1650,9 +1719,6 @@ export default function Home() {
             );
           })}
         </ol>
-        <p className="mt-3 rounded-xl bg-[#f3efff] px-3 py-2 text-[9px] font-semibold leading-4 text-[#27322d]/55">
-          A product below 75% match pauses outreach instead of forcing a pitch.
-        </p>
       </aside>
       {celebration && (
         <output className="celebration-toast" aria-live="polite">
@@ -2284,7 +2350,7 @@ export default function Home() {
             </section>
             <section
               id="creator-insights"
-              className="mt-6 rounded-[20px] border border-black/10 bg-[#f1ecff] p-5 sm:p-6"
+              className="mt-6 scroll-mt-28 rounded-[20px] border border-black/10 bg-[#f1ecff] p-5 sm:p-6"
               aria-labelledby="structured-profile-title"
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2343,8 +2409,9 @@ export default function Home() {
               )}
             </section>
             <section
-              className="mt-6 rounded-[22px] border border-[#27322d]/10 bg-[#dff2df] p-5 text-[#27322d] sm:p-6"
-              aria-labelledby="conversation-angles"
+              id="conversation-angles"
+              className="mt-6 scroll-mt-28 rounded-[22px] border border-[#27322d]/10 bg-[#dff2df] p-5 text-[#27322d] sm:p-6"
+              aria-labelledby="conversation-angles-title"
             >
               <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
                 <div className="flex items-start gap-3">
@@ -2355,7 +2422,10 @@ export default function Home() {
                     <p className="eyebrow text-[#27322d]/45">
                       1.5 / TALKING POINT
                     </p>
-                    <h3 id="conversation-angles" className="text-xl font-black">
+                    <h3
+                      id="conversation-angles-title"
+                      className="text-xl font-black"
+                    >
                       Choose what to talk about
                     </h3>
                     <p className="mt-1 max-w-2xl text-sm leading-6 text-[#27322d]/60">
