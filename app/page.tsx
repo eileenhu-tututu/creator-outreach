@@ -1412,6 +1412,11 @@ export default function Home() {
         : 'Reading public TikTok videos…',
     );
     try {
+      trackEvent('analysis_started', {
+        run_id: runId,
+        creator_id_hash: creatorHash,
+        source: collectionSource,
+      });
       const response = await fetch('/api/collect', {
         method: 'POST',
         headers: {
