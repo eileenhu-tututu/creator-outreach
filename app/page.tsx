@@ -1607,7 +1607,7 @@ export default function Home() {
       <DemoModeBanner />
       <aside
         aria-label="Creator outreach workflow"
-        className="fixed right-4 top-24 z-40 hidden w-[244px] rounded-[24px] border border-black/10 bg-white/90 p-4 shadow-[0_18px_60px_rgba(39,50,45,.16)] backdrop-blur-xl 2xl:block"
+        className="fixed right-4 top-24 z-40 hidden w-[244px] translate-x-[198px] rounded-[24px] border border-black/10 bg-white/90 p-4 shadow-[0_18px_60px_rgba(39,50,45,.16)] backdrop-blur-xl transition-transform duration-300 hover:translate-x-0 xl:block 2xl:translate-x-0"
       >
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
