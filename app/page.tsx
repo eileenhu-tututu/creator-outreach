@@ -68,6 +68,12 @@ import { BrandNav } from '@/components/brand-nav';
 import { DemoModeBanner } from '@/components/demo-mode-banner';
 import { OutreachStory } from '@/components/outreach-story';
 import { demoCredentialHeaders } from '@/lib/demo-credentials';
+import {
+  readOutreachHistory,
+  updateOutreachHistoryItem,
+  writeOutreachHistory,
+  type OutreachChannel,
+} from '@/lib/outreach-history';
 
 const creatorImages = [
   'https://images.unsplash.com/photo-1620396748669-46bd3128ccce?w=720&h=1280&fit=crop&auto=format',
@@ -213,6 +219,10 @@ export default function Home() {
   const [matchingProducts, setMatchingProducts] = useState(false);
   const [matchSignature, setMatchSignature] = useState('');
   const [result, setResult] = useState<Result | null>(null);
+  const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
+  const [activeSentAt, setActiveSentAt] = useState<string | null>(null);
+  const [outreachChannel, setOutreachChannel] =
+    useState<OutreachChannel>('TikTok DM');
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [collectionSource, setCollectionSource] =
@@ -643,6 +653,8 @@ export default function Home() {
     setCommission(match.product.commission);
     setFreeSample(match.product.freeSample);
     setResult(null);
+    setActiveHistoryId(null);
+    setActiveSentAt(null);
   };
 
   const matchProducts = () => {
@@ -677,27 +689,25 @@ export default function Home() {
     setGenerating(true);
     window.setTimeout(() => {
       const nextResult = buildResult(tone);
+      const historyId = crypto.randomUUID();
       setResult(nextResult);
+      setActiveHistoryId(historyId);
+      setActiveSentAt(null);
+      setOutreachChannel('TikTok DM');
       setGenerating(false);
       setCelebration('message');
       window.setTimeout(() => setCelebration(null), 1800);
-      const stored = JSON.parse(
-        window.localStorage.getItem('creator-outreach-history') || '[]',
-      ) as unknown[];
-      window.localStorage.setItem(
-        'creator-outreach-history',
-        JSON.stringify(
-          [
-            {
-              id: crypto.randomUUID(),
-              createdAt: new Date().toISOString(),
-              username: cleanHandle(username),
-              product,
-              ...nextResult,
-            },
-            ...stored,
-          ].slice(0, 50),
-        ),
+      writeOutreachHistory(
+        [
+          {
+            id: historyId,
+            createdAt: new Date().toISOString(),
+            username: cleanHandle(username),
+            product,
+            ...nextResult,
+          },
+          ...readOutreachHistory(),
+        ].slice(0, 50),
       );
       window.setTimeout(
         () =>
@@ -708,6 +718,28 @@ export default function Home() {
       );
     }, 650);
   };
+
+  const markCurrentAsSent = (channel: OutreachChannel = outreachChannel) => {
+    if (!result || !activeHistoryId || activeSentAt) return;
+    const sentAt = new Date().toISOString();
+    updateOutreachHistoryItem(activeHistoryId, {
+      score: result.score,
+      hook: result.hook,
+      dm: result.dm,
+      subject: result.subject,
+      email: result.email,
+      sentAt,
+      sentChannel: channel,
+      replyStatus: 'pending',
+      replyRecordedAt: undefined,
+    });
+    setActiveSentAt(sentAt);
+    setOutreachChannel(channel);
+    setSendMessage(
+      `Marked as sent via ${channel}. Reply tracking is ready in History.`,
+    );
+  };
+
   const copyText = async (key: string, value: string) => {
     await navigator.clipboard.writeText(value);
     setCopied(key);
@@ -1123,7 +1155,10 @@ export default function Home() {
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || 'Send failed.');
-      setSendMessage('Email sent successfully.');
+      markCurrentAsSent('Email');
+      setSendMessage(
+        'Email sent successfully. Reply tracking is ready in History.',
+      );
     } catch (error) {
       setSendMessage(error instanceof Error ? error.message : 'Send failed.');
     } finally {
@@ -2225,9 +2260,19 @@ export default function Home() {
         id="results"
         className="mx-auto max-w-[1440px] scroll-mt-24 px-5 pb-24 pt-12 lg:px-10"
       >
-        <div className="mb-5">
-          <p className="eyebrow">03 / OUTREACH</p>
-          <h2 className="section-title">Personalized outreach</h2>
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="eyebrow">03 / OUTREACH</p>
+            <h2 className="section-title">Personalized outreach</h2>
+          </div>
+          {result ? (
+            <a
+              href="/history"
+              className="rounded-full border border-white/15 px-4 py-2 text-sm font-bold text-white/70 transition hover:bg-white hover:text-[#27322d]"
+            >
+              Open History
+            </a>
+          ) : null}
         </div>
         {!result ? (
           <div className="grid min-h-[330px] place-items-center rounded-[28px] border border-dashed border-white/15 bg-white/[.025] text-center">
@@ -2246,6 +2291,58 @@ export default function Home() {
           </div>
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <article className="mb-5 flex flex-col justify-between gap-4 rounded-[24px] bg-[#eaf4e8] p-5 text-[#27322d] sm:flex-row sm:items-center sm:p-6">
+              <div className="max-w-xl">
+                <div className="flex items-center gap-2">
+                  <span className="grid size-9 place-items-center rounded-full bg-[#ddd0ff]">
+                    <Send className="size-4" />
+                  </span>
+                  <div>
+                    <p className="font-black">Outreach tracking</p>
+                    <p className="text-xs leading-5 text-[#27322d]/55">
+                      {activeSentAt
+                        ? `Sent ${new Date(activeSentAt).toLocaleString()}. Reply status starts as Pending.`
+                        : 'After sending outside this app, choose the channel and mark this message as sent.'}
+                    </p>
+                  </div>
+                </div>
+                {activeSentAt ? (
+                  <p className="mt-3 text-xs font-bold text-[#27322d]/55">
+                    “No reply” becomes available in History after the seven-day
+                    observation window.
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-2 sm:min-w-[360px] sm:flex-row">
+                <Select
+                  value={outreachChannel}
+                  onValueChange={(value) =>
+                    setOutreachChannel(value as OutreachChannel)
+                  }
+                  disabled={Boolean(activeSentAt)}
+                >
+                  <SelectTrigger className="h-11 w-full rounded-full border-[#27322d]/15 bg-white px-4 text-[#27322d] sm:w-[170px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-white text-[#27322d]">
+                    <SelectItem value="TikTok DM">TikTok DM</SelectItem>
+                    <SelectItem value="Instagram DM">Instagram DM</SelectItem>
+                    <SelectItem value="WhatsApp">WhatsApp</SelectItem>
+                    <SelectItem value="Email">Email</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  onClick={() => markCurrentAsSent()}
+                  disabled={Boolean(activeSentAt)}
+                  className="h-11 flex-1 rounded-full bg-[#27322d] px-5 font-bold text-white hover:bg-[#39463f] disabled:bg-[#aee8c5] disabled:text-[#174b2a] disabled:opacity-100"
+                >
+                  {activeSentAt ? <Check /> : <Send />}
+                  {activeSentAt ? 'Sent · Pending' : 'Mark as sent'}
+                </Button>
+              </div>
+            </article>
             <article className="mb-5 grid overflow-hidden rounded-[28px] bg-white text-black lg:grid-cols-[1fr_80px_1fr_170px]">
               <div className="flex gap-4 p-5 sm:p-7">
                 <img
