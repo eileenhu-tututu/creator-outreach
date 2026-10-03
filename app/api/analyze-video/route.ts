@@ -88,6 +88,51 @@ const isDirectVideoUrl = (value: string) => {
   }
 };
 
+type SupadataTranscript = {
+  content?: string | Array<{ text?: string }>;
+  jobId?: string;
+  status?: 'queued' | 'active' | 'completed' | 'failed';
+};
+
+const supadataTranscriptText = (data: SupadataTranscript) =>
+  typeof data.content === 'string'
+    ? data.content.trim()
+    : Array.isArray(data.content)
+      ? data.content
+          .map((part) => part.text || '')
+          .join(' ')
+          .trim()
+      : '';
+
+async function requestSupadataTranscript(url: string, apiKey: string) {
+  const transcriptUrl = new URL('https://api.supadata.ai/v1/transcript');
+  transcriptUrl.search = new URLSearchParams({
+    url,
+    lang: 'en',
+    text: 'true',
+    mode: 'auto',
+  }).toString();
+  const response = await fetch(transcriptUrl, {
+    headers: { 'x-api-key': apiKey },
+  });
+  if (!response.ok && response.status !== 202) {
+    return { transcript: '', status: 'failed' as const };
+  }
+  const data = (await response.json().catch(() => ({}))) as SupadataTranscript;
+  const transcript = supadataTranscriptText(data);
+  if (transcript) {
+    return { transcript, status: 'ready' as const };
+  }
+  if (data.jobId) {
+    return {
+      transcript: '',
+      status: 'processing' as const,
+      jobId: data.jobId,
+    };
+  }
+  return { transcript: '', status: 'not_found' as const };
+}
+
 const normalize = (data: VisualAnalysis) => ({
   status: 'ready' as const,
   spokenTranscript: data.spokenTranscript?.trim() || '',
@@ -123,8 +168,14 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
+  const supadataKey = requestCredential(
+    request,
+    'x-demo-supadata-api-key',
+    'SUPADATA_API_KEY',
+  );
 
   let uploadedName = '';
+  let sourceUrl = '';
   try {
     const contentType = request.headers.get('content-type') || '';
     let videoPart:
@@ -170,6 +221,7 @@ export async function POST(request: Request) {
       if (!url) {
         return Response.json({ error: 'Missing video URL.' }, { status: 400 });
       }
+      sourceUrl = url;
       if (!isYouTubeUrl(url) && !isDirectVideoUrl(url)) {
         return Response.json(
           {
@@ -189,12 +241,77 @@ export async function POST(request: Request) {
       };
     }
 
-    const result = await generateGeminiJson<VisualAnalysis>({
-      parts: [videoPart, { text: prompt }],
-      schema,
-      apiKey: geminiKey,
+    let geminiResult: VisualAnalysis | null = null;
+    let geminiError = '';
+    try {
+      geminiResult = await generateGeminiJson<VisualAnalysis>({
+        parts: [videoPart, { text: prompt }],
+        schema,
+        apiKey: geminiKey,
+      });
+    } catch (error) {
+      geminiError =
+        error instanceof Error
+          ? error.message
+          : 'Gemini video analysis failed.';
+    }
+
+    const gemini = geminiResult
+      ? normalize(geminiResult)
+      : {
+          status: 'ready' as const,
+          spokenTranscript: '',
+          visualText: [] as string[],
+          contentType: '',
+          qualityScore: 0,
+          isDanceOnly: false,
+          creatorSignals: [] as string[],
+          qualityReason: '',
+          provider: 'gemini',
+        };
+    let spokenTranscript = gemini.spokenTranscript;
+    let spokenTranscriptProvider: 'gemini' | 'supadata' | 'none' =
+      spokenTranscript ? 'gemini' : 'none';
+    let spokenTranscriptStatus:
+      | 'ready'
+      | 'processing'
+      | 'not_found'
+      | 'failed' = spokenTranscript ? 'ready' : 'not_found';
+    let transcriptJobId: string | undefined;
+
+    if (
+      !spokenTranscript &&
+      sourceUrl &&
+      isYouTubeUrl(sourceUrl) &&
+      supadataKey
+    ) {
+      const fallback = await requestSupadataTranscript(sourceUrl, supadataKey);
+      spokenTranscript = fallback.transcript;
+      spokenTranscriptProvider =
+        fallback.status === 'ready' || fallback.status === 'processing'
+          ? 'supadata'
+          : 'none';
+      spokenTranscriptStatus = fallback.status;
+      transcriptJobId = fallback.jobId;
+    }
+
+    if (!geminiResult && !spokenTranscript && !transcriptJobId) {
+      throw new Error(geminiError || 'Video analysis failed.');
+    }
+
+    return Response.json({
+      ...gemini,
+      spokenTranscript,
+      spokenTranscriptProvider,
+      spokenTranscriptStatus,
+      transcriptJobId,
+      geminiStatus: geminiResult
+        ? gemini.spokenTranscript
+          ? 'ready'
+          : 'ready_no_speech'
+        : 'failed',
+      geminiError: geminiError || undefined,
     });
-    return Response.json(normalize(result));
   } catch (error) {
     return Response.json(
       {

@@ -93,6 +93,7 @@ const creatorImages = [
 const productImage =
   'https://images.unsplash.com/photo-1576188973526-0e5d7047b0cf?w=900&h=700&fit=crop&auto=format';
 const initialTranscripts = [''];
+const minimumProductMatchScore = 75;
 
 type Result = OutreachResult;
 type InlineEmailImage = {
@@ -140,6 +141,17 @@ const videoScript = (video: CollectedVideo) => {
     .filter(Boolean)
     .join('\n\n');
 };
+const visualFailureUpdater =
+  (videoId: string, failureMessage: string) => (videos: CollectedVideo[]) =>
+    videos.map((item) =>
+      item.id === videoId
+        ? {
+            ...item,
+            visualStatus: 'failed' as const,
+            visualError: failureMessage,
+          }
+        : item,
+    );
 
 const transcriptQuality = (video: CollectedVideo, transcript: string) => {
   const words = transcript.split(/\s+/).filter(Boolean).length;
@@ -194,6 +206,7 @@ export default function Home() {
   const [matchingProducts, setMatchingProducts] = useState(false);
   const [matchSignature, setMatchSignature] = useState('');
   const [result, setResult] = useState<Result | null>(null);
+  const [resultEdited, setResultEdited] = useState(false);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [activeSentAt, setActiveSentAt] = useState<string | null>(null);
   const [outreachChannel, setOutreachChannel] =
@@ -302,6 +315,84 @@ export default function Home() {
   const selectedMatch =
     productMatches.find((item) => item.product.id === selectedProductId) ||
     null;
+  const selectedMatchEligible = Boolean(
+    selectedMatch && selectedMatch.score >= minimumProductMatchScore,
+  );
+  const activeHistoryItem = useMemo(
+    () =>
+      activeHistoryId
+        ? readOutreachHistory().find((item) => item.id === activeHistoryId)
+        : undefined,
+    [activeHistoryId],
+  );
+  const replyRecorded = Boolean(
+    activeHistoryItem?.replyStatus &&
+    activeHistoryItem.replyStatus !== 'pending',
+  );
+  const workflowSteps = [
+    {
+      label: 'Submit Creator',
+      href: '#generator',
+      complete: Boolean(collectionInput.trim() || username.trim()),
+    },
+    {
+      label: 'Transcript + screen text',
+      href: '#generator',
+      complete:
+        collectedVideos.some((video) => Boolean(videoScript(video))) ||
+        transcripts.some((script) => Boolean(script.trim())),
+    },
+    {
+      label: 'Generate Creator insights',
+      href: '#creator-insights',
+      complete: hasStructuredProfile,
+    },
+    {
+      label: 'Confirm talking point',
+      href: '#conversation-angles',
+      complete: Boolean(selectedAngle),
+    },
+    {
+      label: 'Match product',
+      href: '#product-match',
+      complete: Boolean(selectedMatchEligible && matchesFresh),
+    },
+    {
+      label: 'Generate personalized copy',
+      href: '#results',
+      complete: Boolean(result),
+    },
+    {
+      label: 'Edit or copy',
+      href: '#results',
+      complete: Boolean(result && resultEdited),
+    },
+    {
+      label: 'Mark as sent',
+      href: '#results',
+      complete: Boolean(activeSentAt),
+    },
+    {
+      label: 'Record reply result',
+      href: '/history',
+      complete: replyRecorded,
+    },
+    {
+      label: 'Analyze winning patterns',
+      href: '/history',
+      complete: Boolean(
+        activeHistoryItem?.replyStatus === 'positive' ||
+        activeHistoryItem?.replyStatus === 'collaboration_started',
+      ),
+    },
+  ];
+  const firstIncompleteWorkflowStep = workflowSteps.findIndex(
+    (step) => !step.complete,
+  );
+  const currentWorkflowStep =
+    firstIncompleteWorkflowStep === -1
+      ? workflowSteps.length - 1
+      : firstIncompleteWorkflowStep;
   const currentWorkspaceSnapshot = useMemo<CreatorWorkspaceSnapshot>(
     () => ({
       version: 1,
@@ -714,25 +805,41 @@ export default function Home() {
         'Acknowledge the creator’s point of view without repeating their transcript.',
       whyItWorks: 'Keeps the opener personal without forcing a quote.',
     };
-    const sample = freeSample
-      ? 'We’d love to send you one—no strings attached.'
-      : 'We’d love to explore a collaboration.';
-    const affiliate = commission
-      ? ` It also comes with ${commission} affiliate commission.`
-      : '';
-    let dm = `I really like ${angle.dmLead}. ${product} came to mind because the ${feature.toLowerCase()} detail feels like a natural fit for the content you already make. ${sample}${affiliate} Would you be open to checking it out?`;
-    let email = `Hi ${name},\n\nI’ve been enjoying ${angle.dmLead}. It feels thoughtful and genuinely useful rather than overly produced.\n\nAfter looking across our product lineup, ${product} came out as the strongest match. Its ${features.slice(0, 3).join(', ').toLowerCase()} features could fit naturally into the content you already make. ${sample}${affiliate}\n\nWould you be open to taking a look? Full creative control, always.\n\n— Partnerships team`;
+    const creatorContext =
+      `${creatorProfileText(structuredCreatorProfile)} ${bio} ${transcripts.join(' ')}`.toLowerCase();
+    const audienceNeed =
+      structuredCreatorProfile.pain_points[0] ||
+      structuredCreatorProfile.preferences[0] ||
+      'practical ideas that feel useful in real life';
+    const topic = angle.title.replace(/[.!?]+$/, '').toLowerCase();
+    const contentScene = /diy|craft|wood|tool|market/.test(creatorContext)
+      ? 'outdoor projects, market days, or shoots where you bring tools and a laptop'
+      : /food|drink|coffee|recipe|kitchen/.test(creatorContext)
+        ? 'recipe shoots, market days, or creator outings where you carry ingredients and filming gear'
+        : /beauty|makeup|skin|hair/.test(creatorContext)
+          ? 'tutorial shoots, creator events, or days when you carry products and filming gear'
+          : /fashion|outfit|style|wear/.test(creatorContext)
+            ? 'styling videos, day trips, or creator event days'
+            : /travel|camp|outdoor|road/.test(creatorContext)
+              ? 'outdoor shoots, road trips, or days spent carrying creator essentials'
+              : 'the real-life routines and content formats your audience already follows';
+    const productFunctions = features.slice(0, 2).join(' and ').toLowerCase();
+    const sampleOffer = freeSample
+      ? 'We’d be happy to send one for you to try, with full creative control.'
+      : 'We’d be happy to share the details, with full creative control.';
+    const commissionLine = commission
+      ? `If it feels relevant, the collaboration includes ${commission} affiliate commission.`
+      : 'If it feels relevant, we’d be happy to share the collaboration details.';
+    let dm = `I’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. It feels like your audience values ${audienceNeed.toLowerCase()}. ${product}’s ${productFunctions} could fit naturally into ${contentScene}, giving you a useful way to feature it without changing the style of your content. ${sampleOffer} Would you be open to checking it out? ${commissionLine}`;
+    let email = `Hi ${name},\n\nI’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. It feels like your audience values ${audienceNeed.toLowerCase()}.\n\n${product}’s ${productFunctions} could fit naturally into ${contentScene}. That gives you a clear, useful product moment inside the formats your audience already watches, without forcing a separate sponsor-style segment.\n\n${sampleOffer} Would you be open to taking a look?\n\n${commissionLine}\n\n— Partnerships team`;
     if (tone === 'shorter') {
-      dm = `Love ${angle.dmLead}. ${product} feels like a natural fit, especially the ${feature.toLowerCase()} detail. Can we send you one?`;
-      email = `Hi ${name},\n\nI’ve been enjoying ${angle.dmLead}. ${product} ranked as our strongest fit, especially its ${features.slice(0, 2).join(' and ').toLowerCase()} features. ${sample}\n\nOpen to taking a look?\n\n— Partnerships team`;
+      dm = `I’ve been enjoying your ${topic} content, especially ${angle.dmLead}. Since your audience values ${audienceNeed.toLowerCase()}, ${product}’s ${feature.toLowerCase()} could fit naturally into ${contentScene}. Open to taking a look? ${commissionLine}`;
+      email = `Hi ${name},\n\nI’ve been enjoying your ${topic} content, especially ${angle.dmLead}. Since your audience values ${audienceNeed.toLowerCase()}, ${product}’s ${productFunctions} could fit naturally into ${contentScene}.\n\nOpen to taking a look? ${commissionLine}\n\n— Partnerships team`;
     } else if (tone === 'casual') {
-      dm = `Okay, we really like ${angle.dmLead} 🫶 ${product} was the clear match from our lineup—the ${feature.toLowerCase()} detail feels very you. Want us to send one your way?`;
+      dm = `Really enjoying your ${topic} content—especially ${angle.dmLead}. Your audience seems to value ${audienceNeed.toLowerCase()}, and ${product}’s ${feature.toLowerCase()} could work naturally for ${contentScene}. Want to take a look? ${commissionLine}`;
     } else if (tone === 'soft') {
-      dm = `I’ve been enjoying ${angle.dmLead}. ${product} might be a natural fit, especially the ${feature.toLowerCase()} detail. Happy to share more if it feels relevant—no pressure at all.`;
-      email = email.replace(
-        'Would you be open to taking a look?',
-        'If it feels like a fit, we’d be happy to share more—no pressure at all.',
-      );
+      dm = `I’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. ${product}’s ${productFunctions} may fit naturally into ${contentScene}. Happy to share more if it feels relevant—no pressure at all. ${commissionLine}`;
+      email = `Hi ${name},\n\nI’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. ${product}’s ${productFunctions} may fit naturally into ${contentScene}.\n\nHappy to share more if it feels relevant—no pressure at all. ${commissionLine}\n\n— Partnerships team`;
     }
     return {
       score: Math.max(1, Math.round((match?.score || 70) / 10)),
@@ -754,6 +861,7 @@ export default function Home() {
   };
 
   const chooseProduct = (match: ProductMatch) => {
+    if (match.score < minimumProductMatchScore) return;
     setSelectedProductId(match.product.id);
     setProduct(match.product.name);
     setDescription(match.product.description);
@@ -784,7 +892,14 @@ export default function Home() {
       );
       setProductMatches(ranked);
       setMatchSignature(creatorSignature);
-      if (ranked[0]) chooseProduct(ranked[0]);
+      if (ranked[0]?.score >= minimumProductMatchScore) {
+        chooseProduct(ranked[0]);
+      } else {
+        setSelectedProductId(null);
+        setResult(null);
+        setActiveHistoryId(null);
+        setActiveSentAt(null);
+      }
       setMatchingProducts(false);
       setCelebration('match');
       window.setTimeout(() => setCelebration(null), 1800);
@@ -794,6 +909,8 @@ export default function Home() {
   const generate = (
     tone: 'default' | 'shorter' | 'casual' | 'soft' = 'default',
   ) => {
+    if (!selectedMatch || selectedMatch.score < minimumProductMatchScore)
+      return;
     setGenerating(true);
     window.setTimeout(() => {
       const nextResult = buildResult(tone);
@@ -808,6 +925,7 @@ export default function Home() {
       const workspaceId = archiveCreatorWorkspace(nextWorkspace);
       writeCurrentWorkspace(nextWorkspace);
       setResult(nextResult);
+      setResultEdited(false);
       setActiveHistoryId(historyId);
       setActiveSentAt(null);
       setOutreachChannel('TikTok DM');
@@ -841,6 +959,7 @@ export default function Home() {
     field: 'dm' | 'subject' | 'email',
     value: string,
   ) => {
+    setResultEdited(true);
     setResult((current) =>
       current ? { ...current, [field]: value } : current,
     );
@@ -879,6 +998,7 @@ export default function Home() {
 
   const copyText = async (key: string, value: string) => {
     await navigator.clipboard.writeText(value);
+    setResultEdited(true);
     setCopied(key);
     window.setTimeout(() => setCopied(null), 1400);
   };
@@ -926,6 +1046,8 @@ export default function Home() {
           const readyVideo: CollectedVideo = {
             ...video,
             transcript: data.transcript,
+            spokenTranscriptProvider: 'supadata',
+            spokenTranscriptStatus: 'ready',
             status: 'ready',
             ...transcriptQuality(video, data.transcript),
           };
@@ -934,13 +1056,28 @@ export default function Home() {
               item.id === video.id ? { ...item, ...readyVideo } : item,
             ),
           );
+          if (selectedVideoIds.includes(video.id)) {
+            const selectedIndex = selectedVideoIds.indexOf(video.id);
+            setTranscripts((current) =>
+              current.map((script, index) =>
+                index === selectedIndex ? videoScript(readyVideo) : script,
+              ),
+            );
+          }
           setCollectionMessage(
             'The script is ready. Select “Use script” to add it to the workspace.',
           );
         } else {
           setCollectedVideos((current) =>
             current.map((item) =>
-              item.id === video.id ? { ...item, status: 'failed' } : item,
+              item.id === video.id
+                ? {
+                    ...item,
+                    status: videoScript(item) ? 'ready' : 'failed',
+                    spokenTranscriptStatus: 'not_found',
+                    jobId: undefined,
+                  }
+                : item,
             ),
           );
         }
@@ -1003,6 +1140,15 @@ export default function Home() {
         error?: string;
         status?: 'ready' | 'processing' | 'failed';
         spokenTranscript?: string;
+        spokenTranscriptProvider?: 'gemini' | 'supadata' | 'none';
+        spokenTranscriptStatus?:
+          | 'ready'
+          | 'processing'
+          | 'not_found'
+          | 'failed';
+        transcriptJobId?: string;
+        geminiStatus?: 'ready' | 'ready_no_speech' | 'failed';
+        geminiError?: string;
         visualText?: string[];
         creatorSignals?: string[];
         contentType?: string;
@@ -1020,7 +1166,13 @@ export default function Home() {
       const updated: CollectedVideo = {
         ...video,
         transcript: spokenTranscript,
+        spokenTranscriptProvider: data.spokenTranscriptProvider || 'none',
+        spokenTranscriptStatus:
+          data.spokenTranscriptStatus ||
+          (spokenTranscript ? 'ready' : 'not_found'),
+        geminiStatus: data.geminiStatus || 'ready',
         status: 'ready',
+        jobId: data.transcriptJobId,
         visualJobId: undefined,
         visualStatus: 'ready',
         visualError: undefined,
@@ -1049,25 +1201,26 @@ export default function Home() {
           ),
         );
       }
+      if (data.transcriptJobId) {
+        void pollTranscript(updated);
+      }
       if (!background) {
         setCollectionMessage(
-          spokenTranscript || data.visualText?.length
-            ? 'Gemini added the spoken script and visible text to this video.'
-            : 'Gemini finished reviewing the video. No meaningful speech or visible text was found.',
+          spokenTranscript
+            ? `Spoken transcript ready via ${data.spokenTranscriptProvider === 'supadata' ? 'Supadata fallback' : 'Gemini'}, with Gemini screen text preserved.`
+            : data.transcriptJobId
+              ? 'Gemini read the visuals. Supadata is still preparing the spoken transcript.'
+              : data.visualText?.length
+                ? 'Gemini found screen text but no reliable speech. Supadata found no public transcript.'
+                : 'Gemini finished reviewing the video. No meaningful speech or visible text was found.',
         );
       }
       return true;
     } catch (error) {
-      const message =
+      const failureMessage =
         error instanceof Error ? error.message : 'Screen-text analysis failed.';
-      setCollectedVideos((current) =>
-        current.map((item) =>
-          item.id === video.id
-            ? { ...item, visualStatus: 'failed', visualError: message }
-            : item,
-        ),
-      );
-      if (!background) setCollectionMessage(message);
+      setCollectedVideos(visualFailureUpdater(video.id, failureMessage));
+      if (!background) setCollectionMessage(failureMessage);
       return false;
     } finally {
       finish();
@@ -1452,6 +1605,55 @@ export default function Home() {
     <main className="app-shell min-h-screen bg-background text-foreground">
       <BrandNav active="generator" />
       <DemoModeBanner />
+      <aside
+        aria-label="Creator outreach workflow"
+        className="fixed right-4 top-24 z-40 hidden w-[244px] rounded-[24px] border border-black/10 bg-white/90 p-4 shadow-[0_18px_60px_rgba(39,50,45,.16)] backdrop-blur-xl 2xl:block"
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[.16em] text-black/40">
+              Your workflow
+            </p>
+            <p className="mt-1 text-sm font-black text-[#27322d]">
+              Step {currentWorkflowStep + 1} of {workflowSteps.length}
+            </p>
+          </div>
+          <span className="grid size-9 place-items-center rounded-full bg-[#ddd0ff] text-xs font-black text-[#27322d]">
+            {workflowSteps.filter((step) => step.complete).length}/
+            {workflowSteps.length}
+          </span>
+        </div>
+        <ol className="space-y-1">
+          {workflowSteps.map((step, index) => {
+            const current = index === currentWorkflowStep;
+            return (
+              <li key={step.label} className="relative">
+                {index < workflowSteps.length - 1 ? (
+                  <span
+                    aria-hidden="true"
+                    className={`absolute left-[13px] top-7 h-[18px] w-px ${step.complete ? 'bg-[#71a77c]' : 'bg-black/10'}`}
+                  />
+                ) : null}
+                <a
+                  href={step.href}
+                  aria-current={current ? 'step' : undefined}
+                  className={`flex min-h-9 items-center gap-2.5 rounded-xl px-1.5 py-1.5 text-[11px] font-bold transition ${current ? 'bg-[#eef5eb] text-[#27322d]' : 'text-[#27322d]/55 hover:bg-black/[.035] hover:text-[#27322d]'}`}
+                >
+                  <span
+                    className={`relative z-10 grid size-6 shrink-0 place-items-center rounded-full border text-[9px] font-black ${step.complete ? 'border-[#71a77c] bg-[#dff3df] text-[#32633c]' : current ? 'border-[#ff7768] bg-[#ffe0db] text-[#9e392f]' : 'border-black/10 bg-white text-black/35'}`}
+                  >
+                    {step.complete ? <Check className="size-3" /> : index + 1}
+                  </span>
+                  <span className="leading-4">{step.label}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ol>
+        <p className="mt-3 rounded-xl bg-[#f3efff] px-3 py-2 text-[9px] font-semibold leading-4 text-[#27322d]/55">
+          A product below 75% match pauses outreach instead of forcing a pitch.
+        </p>
+      </aside>
       {celebration && (
         <output className="celebration-toast" aria-live="polite">
           <span aria-hidden="true">
@@ -1905,7 +2107,22 @@ export default function Home() {
                               </p>
                             </div>
                           ) : null}
-                          {video.status === 'processing' && video.jobId ? (
+                          <div className="mt-2 rounded-[10px] bg-[#eef4ff] px-2.5 py-2 text-[10px] leading-4 text-black/65">
+                            <p className="font-black uppercase tracking-[.08em] text-black/40">
+                              Spoken transcript
+                            </p>
+                            <p className="mt-1 font-semibold">
+                              {video.transcript
+                                ? `Ready via ${video.spokenTranscriptProvider === 'supadata' ? 'Supadata fallback' : 'Gemini'}`
+                                : video.spokenTranscriptStatus === 'processing'
+                                  ? 'Supadata is preparing the transcript…'
+                                  : video.geminiStatus === 'failed'
+                                    ? 'Gemini failed · no fallback transcript yet'
+                                    : 'No reliable speech found'}
+                            </p>
+                          </div>
+                          {video.jobId &&
+                          video.spokenTranscriptStatus === 'processing' ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -2066,6 +2283,7 @@ export default function Home() {
               </div>
             </section>
             <section
+              id="creator-insights"
               className="mt-6 rounded-[20px] border border-black/10 bg-[#f1ecff] p-5 sm:p-6"
               aria-labelledby="structured-profile-title"
             >
@@ -2332,11 +2550,13 @@ export default function Home() {
                 <div className="grid gap-4 lg:grid-cols-3">
                   {productMatches.slice(0, 3).map((match, index) => {
                     const selected = selectedProductId === match.product.id;
+                    const eligible = match.score >= minimumProductMatchScore;
                     return (
                       <button
                         key={match.product.id}
                         onClick={() => chooseProduct(match)}
-                        className={`relative rounded-[22px] p-5 text-left transition ${selected ? 'bg-[#ff5400] text-black ring-2 ring-[#ff5400]' : 'bg-[#f4f8f1] text-[#27322d] ring-1 ring-black/10 hover:bg-[#e8f1e5]'}`}
+                        disabled={!eligible}
+                        className={`relative rounded-[22px] p-5 text-left transition ${selected ? 'bg-[#ff5400] text-black ring-2 ring-[#ff5400]' : eligible ? 'bg-[#f4f8f1] text-[#27322d] ring-1 ring-black/10 hover:bg-[#e8f1e5]' : 'cursor-not-allowed bg-[#f1f0ed] text-[#27322d]/55 ring-1 ring-black/8'}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -2379,7 +2599,13 @@ export default function Home() {
                               ? 'Free sample'
                               : 'No sample'}
                           </span>
-                          <span>{selected ? 'SELECTED ✓' : 'SELECT'}</span>
+                          <span>
+                            {selected
+                              ? 'SELECTED ✓'
+                              : eligible
+                                ? 'SELECT'
+                                : 'BELOW 75%'}
+                          </span>
                         </div>
                       </button>
                     );
@@ -2391,6 +2617,16 @@ export default function Home() {
                     before generating outreach.
                   </p>
                 )}
+                {matchesFresh &&
+                productMatches[0]?.score < minimumProductMatchScore ? (
+                  <div className="mt-4 rounded-[16px] border border-[#b54c42]/25 bg-[#ffe8e3] px-4 py-3 text-sm text-[#7a3028]">
+                    <strong>No suitable product found.</strong> The best match
+                    is {productMatches[0].score}%, below the{' '}
+                    {minimumProductMatchScore}% minimum. Add a more relevant
+                    product or change the confirmed talking point before
+                    generating outreach.
+                  </div>
+                ) : null}
               </div>
             )}
           </article>
@@ -2403,13 +2639,19 @@ export default function Home() {
             </span>
             <span>
               <strong className="block text-[#27322d]">
-                {selectedMatch && matchesFresh
+                {selectedMatch && selectedMatchEligible && matchesFresh
                   ? `${product} selected at ${selectedMatch.score}% match.`
-                  : 'Match a product before writing.'}
+                  : matchesFresh &&
+                      productMatches[0]?.score < minimumProductMatchScore
+                    ? `No product reached the ${minimumProductMatchScore}% minimum.`
+                    : 'Match a product before writing.'}
               </strong>
-              {selectedMatch && matchesFresh
+              {selectedMatch && selectedMatchEligible && matchesFresh
                 ? `${selectedAngle?.title}: ${selectedMatch.reason}`
-                : 'Confirm a talking point, then match a product before writing.'}
+                : matchesFresh &&
+                    productMatches[0]?.score < minimumProductMatchScore
+                  ? 'Outreach generation is paused to prevent a forced, low-confidence pitch.'
+                  : 'Confirm a talking point, then match a product before writing.'}
             </span>
           </div>
           <Button
@@ -2419,7 +2661,7 @@ export default function Home() {
               !username.trim() ||
               !selectedAngle ||
               !matchesFresh ||
-              !selectedMatch
+              !selectedMatchEligible
             }
             className="h-14 w-full rounded-full bg-[#ff5400] px-8 text-base font-black text-black hover:bg-[#ff6a1a] sm:w-auto"
           >
@@ -2430,7 +2672,9 @@ export default function Home() {
             ) : (
               <>
                 <WandSparkles className="size-5" /> Generate with{' '}
-                {selectedMatch && matchesFresh ? product : 'matched product'}
+                {selectedMatchEligible && matchesFresh
+                  ? product
+                  : 'eligible product'}
               </>
             )}
           </Button>
