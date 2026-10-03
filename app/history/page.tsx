@@ -166,7 +166,10 @@ export default function HistoryPage() {
                           href={`/?restore=${encodeURIComponent(item.id)}`}
                           className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#27322d] px-3 text-xs font-bold text-white transition hover:bg-[#39463f]"
                         >
-                          <ArrowUpRight className="size-3.5" /> Restore research
+                          <ArrowUpRight className="size-3.5" />{' '}
+                          {item.workspaceId
+                            ? 'Restore full research'
+                            : 'Restore saved message'}
                         </a>
                         <Button
                           onClick={() => navigator.clipboard.writeText(item.dm)}
@@ -186,6 +189,11 @@ export default function HistoryPage() {
                           <Trash2 />
                         </Button>
                       </div>
+                      <p className="mt-2 text-xs leading-5 text-[#27322d]/45">
+                        {item.workspaceId
+                          ? 'Includes collected videos, scripts, talking points, product ranking, and this message.'
+                          : 'Legacy record: the original videos and product ranking were not stored when this was created.'}
+                      </p>
                     </div>
 
                     <div className="rounded-[18px] bg-[#eaf4e8] p-4">

@@ -6,6 +6,7 @@ import {
 import { requestCredential } from '@/lib/server-credentials';
 
 type VisualAnalysis = {
+  spokenTranscript?: string;
   onScreenText?: string[];
   contentType?: string;
   outreachValueScore?: number;
@@ -17,6 +18,11 @@ type VisualAnalysis = {
 const schema = {
   type: 'object',
   properties: {
+    spokenTranscript: {
+      type: 'string',
+      description:
+        'A faithful transcript of meaningful spoken words in natural order. Return an empty string when there is no speech.',
+    },
     onScreenText: {
       type: 'array',
       items: { type: 'string' },
@@ -47,6 +53,7 @@ const schema = {
     },
   },
   required: [
+    'spokenTranscript',
     'onScreenText',
     'contentType',
     'outreachValueScore',
@@ -56,7 +63,9 @@ const schema = {
   ],
 };
 
-const prompt = `Read this short-form video carefully, including fast text cards and small overlay captions.
+const prompt = `Read this short-form video carefully, including its spoken audio, fast text cards, and small overlay captions.
+
+Transcribe meaningful spoken wording faithfully in spokenTranscript. Do not summarize it and do not invent words when the audio is unclear.
 
 Return visible wording rather than a summary in onScreenText. Deduplicate text that persists across frames, but keep distinct sentences in their natural order. Do not copy interface chrome such as platform buttons, usernames, engagement counts, or generic TikTok/YouTube controls. Do not invent text that is not legible.
 
@@ -81,6 +90,7 @@ const isDirectVideoUrl = (value: string) => {
 
 const normalize = (data: VisualAnalysis) => ({
   status: 'ready' as const,
+  spokenTranscript: data.spokenTranscript?.trim() || '',
   visualText: Array.isArray(data.onScreenText)
     ? data.onScreenText.filter(
         (item) => typeof item === 'string' && item.trim(),

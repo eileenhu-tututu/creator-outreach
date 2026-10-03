@@ -1,4 +1,3 @@
-import { generateGeminiJson } from '@/lib/gemini';
 import { requestCredential } from '@/lib/server-credentials';
 
 type CollectionSource = 'youtube-shorts' | 'tiktok';
@@ -317,127 +316,9 @@ const youtubeDurationSeconds = (duration = '') => {
   );
 };
 
-type GeminiYouTubeResult = {
-  videos?: Array<{
-    index?: number;
-    spokenTranscript?: string;
-    onScreenText?: string[];
-    contentType?: string;
-    outreachValueScore?: number;
-    isDanceOnly?: boolean;
-    creatorSignals?: string[];
-    reason?: string;
-  }>;
-};
-
-async function analyzeYouTubeBatch(
-  videos: YouTubeVideoItem[],
-  geminiKey: string,
-) {
-  const schema = {
-    type: 'object',
-    properties: {
-      videos: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            index: {
-              type: 'integer',
-              description: 'The one-based video number supplied in the prompt.',
-            },
-            spokenTranscript: {
-              type: 'string',
-              description:
-                'A faithful transcript of meaningful spoken words. Empty when there is no speech.',
-            },
-            onScreenText: {
-              type: 'array',
-              items: { type: 'string' },
-              description:
-                'Meaningful visible captions, overlays, labels, and text cards in reading order. Exclude platform interface text.',
-            },
-            contentType: { type: 'string' },
-            outreachValueScore: {
-              type: 'number',
-              minimum: 0,
-              maximum: 100,
-            },
-            isDanceOnly: { type: 'boolean' },
-            creatorSignals: {
-              type: 'array',
-              items: { type: 'string' },
-            },
-            reason: { type: 'string' },
-          },
-          required: [
-            'index',
-            'spokenTranscript',
-            'onScreenText',
-            'contentType',
-            'outreachValueScore',
-            'isDanceOnly',
-            'creatorSignals',
-            'reason',
-          ],
-        },
-      },
-    },
-    required: ['videos'],
-  };
-
-  const parts = videos.flatMap((video, index) => [
-    { text: `Video ${index + 1}: ${video.snippet.title}` },
-    {
-      file_data: {
-        file_uri: `https://www.youtube.com/shorts/${video.id}`,
-      },
-      video_metadata: { fps: 2 },
-    },
-  ]);
-  parts.push({
-    text: 'Analyze every numbered Short above. Keep each result tied to its one-based index. Preserve spoken wording and visible wording rather than summarizing them. Do not invent missing speech or text. Score product-matching usefulness low for generic dance-only or trend-only clips.',
-  });
-
-  return generateGeminiJson<GeminiYouTubeResult>({
-    parts,
-    schema,
-    apiKey: geminiKey,
-  });
-}
-
-async function buildYouTubeVideos(
-  sourceVideos: YouTubeVideoItem[],
-  geminiKey: string,
-) {
-  let geminiResults: GeminiYouTubeResult['videos'] = [];
-  let analysisMessage = '';
-  if (sourceVideos.length) {
-    try {
-      geminiResults =
-        (await analyzeYouTubeBatch(sourceVideos, geminiKey)).videos || [];
-    } catch (error) {
-      analysisMessage =
-        error instanceof Error
-          ? `Shorts were found, but Gemini could not read them: ${error.message}`
-          : 'Shorts were found, but Gemini could not read them.';
-    }
-  }
-
-  const videos: CollectedVideo[] = sourceVideos.map((video, index) => {
-    const analysis = geminiResults?.find(
-      (item) => Number(item.index) === index + 1,
-    );
-    const transcript = analysis?.spokenTranscript?.trim() || '';
-    const score = Math.max(
-      0,
-      Math.min(100, Math.round(Number(analysis?.outreachValueScore) || 0)),
-    );
-    const fallbackQuality = assessContentQuality(
-      transcript,
-      video.snippet.title,
-    );
-    return {
+const buildYouTubeVideos = (sourceVideos: YouTubeVideoItem[]) =>
+  sourceVideos.map(
+    (video): CollectedVideo => ({
       id: video.id,
       platform: 'youtube-shorts',
       title: video.snippet.title,
@@ -447,35 +328,20 @@ async function buildYouTubeVideos(
         video.snippet.thumbnails?.medium?.url ||
         video.snippet.thumbnails?.default?.url,
       url: `https://www.youtube.com/shorts/${video.id}`,
-      transcript,
-      status: analysis ? 'ready' : 'failed',
-      visualText: analysis?.onScreenText || [],
-      creatorSignals: analysis?.creatorSignals || [],
-      contentType: analysis?.contentType || '',
-      visualStatus: analysis ? 'ready' : 'failed',
-      qualityScore: analysis ? score : fallbackQuality.qualityScore,
-      qualityLabel: analysis?.isDanceOnly
-        ? 'skip'
-        : analysis
-          ? score >= 65
-            ? 'strong'
-            : score >= 38
-              ? 'review'
-              : 'skip'
-          : fallbackQuality.qualityLabel,
+      transcript: '',
+      status: 'processing',
+      visualText: [],
+      creatorSignals: [],
+      contentType: '',
+      visualStatus: undefined,
+      qualityScore: 20,
+      qualityLabel: 'review',
       qualityReason:
-        analysis?.reason || analysisMessage || fallbackQuality.qualityReason,
-    };
-  });
+        'Video found. Gemini is reading its script and screen text.',
+    }),
+  );
 
-  return { videos, analysisMessage };
-}
-
-async function collectSingleYouTubeShort(
-  videoId: string,
-  youtubeKey: string,
-  geminiKey: string,
-) {
+async function collectSingleYouTubeShort(videoId: string, youtubeKey: string) {
   const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
   detailsUrl.search = new URLSearchParams({
     part: 'snippet,contentDetails',
@@ -498,10 +364,7 @@ async function collectSingleYouTubeShort(
     );
   }
 
-  const { videos, analysisMessage } = await buildYouTubeVideos(
-    [video],
-    geminiKey,
-  );
+  const videos = buildYouTubeVideos([video]);
   return Response.json({
     source: 'youtube-shorts',
     channel: {
@@ -510,7 +373,7 @@ async function collectSingleYouTubeShort(
     },
     sampleLimit: 1,
     videos,
-    message: analysisMessage || undefined,
+    message: 'Short found. Its script is loading now.',
   });
 }
 
@@ -518,11 +381,10 @@ async function collectYouTubeShorts(
   input: string,
   maxVideos: number,
   youtubeKey: string,
-  geminiKey: string,
 ) {
   const directVideoId = youtubeVideoId(input);
   if (directVideoId) {
-    return collectSingleYouTubeShort(directVideoId, youtubeKey, geminiKey);
+    return collectSingleYouTubeShort(directVideoId, youtubeKey);
   }
 
   const yt = 'https://www.googleapis.com/youtube/v3';
@@ -660,10 +522,7 @@ async function collectYouTubeShorts(
     )
     .slice(0, maxVideos);
 
-  const { videos, analysisMessage } = await buildYouTubeVideos(
-    latest,
-    geminiKey,
-  );
+  const videos = buildYouTubeVideos(latest);
 
   return Response.json({
     source: 'youtube-shorts',
@@ -675,7 +534,7 @@ async function collectYouTubeShorts(
     sampleLimit: maxVideos,
     videos,
     message: latest.length
-      ? analysisMessage || undefined
+      ? `${latest.length} Shorts found. Scripts are loading progressively.`
       : 'No YouTube Shorts were found on this channel.',
   });
 }
@@ -804,22 +663,17 @@ export async function POST(request: Request) {
       'x-demo-youtube-api-key',
       'YOUTUBE_API_KEY',
     );
-    const geminiKey = requestCredential(
-      request,
-      'x-demo-gemini-api-key',
-      'GEMINI_API_KEY',
-    );
-    if (!youtubeKey || !geminiKey) {
+    if (!youtubeKey) {
       return Response.json(
         {
           error: 'integration_not_configured',
           message:
-            'Add YOUTUBE_API_KEY and GEMINI_API_KEY to collect and read YouTube Shorts.',
+            'Add YOUTUBE_API_KEY to find YouTube Shorts. Gemini is used immediately afterward to read each video.',
         },
         { status: 503 },
       );
     }
-    return collectYouTubeShorts(input, maxVideos, youtubeKey, geminiKey);
+    return collectYouTubeShorts(input, maxVideos, youtubeKey);
   }
 
   if (source === 'tiktok') {

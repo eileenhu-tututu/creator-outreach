@@ -938,7 +938,11 @@ export default function Home() {
     }
   };
 
-  const analyzeVisualText = async (video: CollectedVideo, file?: File) => {
+  const analyzeVisualText = async (
+    video: CollectedVideo,
+    file?: File,
+    background = false,
+  ) => {
     setAnalyzingVideoIds((current) =>
       current.includes(video.id) ? current : [...current, video.id],
     );
@@ -946,11 +950,13 @@ export default function Home() {
       setAnalyzingVideoIds((current) =>
         current.filter((id) => id !== video.id),
       );
-    setCollectionMessage(
-      file
-        ? `Uploading ${file.name} and reading its visible text…`
-        : 'Reading visible text from the video with Gemini…',
-    );
+    if (!background) {
+      setCollectionMessage(
+        file
+          ? `Uploading ${file.name} and reading its visible text…`
+          : 'Reading the video script and visible text with Gemini…',
+      );
+    }
     setCollectedVideos((current) =>
       current.map((item) =>
         item.id === video.id
@@ -977,6 +983,7 @@ export default function Home() {
       const data = (await response.json()) as {
         error?: string;
         status?: 'ready' | 'processing' | 'failed';
+        spokenTranscript?: string;
         visualText?: string[];
         creatorSignals?: string[];
         contentType?: string;
@@ -989,8 +996,12 @@ export default function Home() {
       }
 
       const score = data.qualityScore ?? video.qualityScore;
+      const spokenTranscript =
+        data.spokenTranscript?.trim() || video.transcript || '';
       const updated: CollectedVideo = {
         ...video,
+        transcript: spokenTranscript,
+        status: 'ready',
         visualJobId: undefined,
         visualStatus: 'ready',
         visualError: undefined,
@@ -1019,11 +1030,14 @@ export default function Home() {
           ),
         );
       }
-      setCollectionMessage(
-        data.visualText?.length
-          ? `Gemini found ${data.visualText.length} on-screen text item${data.visualText.length === 1 ? '' : 's'} and added them to this script.`
-          : 'Gemini finished reviewing the video. No meaningful visible text was found.',
-      );
+      if (!background) {
+        setCollectionMessage(
+          spokenTranscript || data.visualText?.length
+            ? 'Gemini added the spoken script and visible text to this video.'
+            : 'Gemini finished reviewing the video. No meaningful speech or visible text was found.',
+        );
+      }
+      return true;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Screen-text analysis failed.';
@@ -1034,7 +1048,8 @@ export default function Home() {
             : item,
         ),
       );
-      setCollectionMessage(message);
+      if (!background) setCollectionMessage(message);
+      return false;
     } finally {
       finish();
     }
@@ -1195,13 +1210,40 @@ export default function Home() {
         setCollectionMessage(
           data.message || 'No matching recent videos were found.',
         );
+      } else if (collectionSource === 'youtube-shorts') {
+        const pending = merged.filter(
+          (video) => video.platform === 'youtube-shorts' && !videoScript(video),
+        );
+        setCollectionMessage(
+          `${videos.length} Shorts found. Reading scripts now — results will appear one by one.`,
+        );
+        void (async () => {
+          let completed = 0;
+          let successful = 0;
+          for (let index = 0; index < pending.length; index += 2) {
+            const batch = pending.slice(index, index + 2);
+            const outcomes = await Promise.all(
+              batch.map((video) => analyzeVisualText(video, undefined, true)),
+            );
+            completed += batch.length;
+            successful += outcomes.filter(Boolean).length;
+            setCollectionMessage(
+              `Reading Shorts: ${completed}/${pending.length} finished · ${successful} usable so far.`,
+            );
+          }
+          setCollectionMessage(
+            successful
+              ? `${successful}/${pending.length} Shorts produced usable scripts or screen text. You can select them now.`
+              : 'The videos were found, but Gemini could not extract usable speech or screen text. Review the errors on each card.',
+          );
+        })();
       } else if (!ready.length) {
         setCollectionMessage(
           'Videos found. Scripts are still loading; select them only after they become ready.',
         );
       } else {
         setCollectionMessage(
-          `${ready.length} ${collectionSource === 'youtube-shorts' ? 'Shorts' : 'TikTok'} scripts are ready. Choose “Use script” on the ones you want.`,
+          `${ready.length} TikTok scripts are ready. Choose “Use script” on the ones you want.`,
         );
       }
     } catch (error) {
