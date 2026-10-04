@@ -44,6 +44,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   defaultProducts,
+  mergeSavedProducts,
   rankProducts,
   type Product,
   type ProductMatch,
@@ -800,7 +801,8 @@ export default function Home() {
     if (savedProducts) {
       try {
         const parsed = JSON.parse(savedProducts) as Product[];
-        if (Array.isArray(parsed) && parsed.length) nextProducts = parsed;
+        if (Array.isArray(parsed) && parsed.length)
+          nextProducts = mergeSavedProducts(parsed);
       } catch {
         /* Ignore invalid local data. */
       }

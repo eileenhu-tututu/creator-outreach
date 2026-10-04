@@ -19,34 +19,185 @@ export type ProductMatch = {
 
 export const defaultProducts: Product[] = [
   {
-    id: 'cloudlayer',
-    name: 'CloudLayer Jacket',
+    id: 'kreg-k4-pocket-hole-jig-system',
+    name: 'Kreg K4 Pocket-Hole Jig System',
     description:
-      'Lightweight everyday rain protection without the stiff shell look.',
-    features: ['Waterproof', 'Lightweight', 'Oversized fit', 'Pink colorway'],
-    matchKeywords: ['rainy weather', 'Seattle', 'outfit styling'],
+      'Pocket-hole jig system for woodworking and DIY furniture projects.',
+    features: [
+      'Precise',
+      'Easy to use',
+      'Adjustable',
+      'Woodworking essential',
+      'DIY furniture-ready',
+    ],
+    matchKeywords: ['woodworking', 'DIY furniture', 'workshop', 'tools'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'urban-decay-naked3-eyeshadow-palette',
+    name: 'Urban Decay Naked3 Eyeshadow Palette',
+    description:
+      'Rose-toned eyeshadow palette for everyday and tutorial looks.',
+    features: [
+      '12 shades',
+      'Rose tones',
+      'Matte/shimmer',
+      'Blendable',
+      'Classic palette',
+    ],
+    matchKeywords: ['makeup tutorial', 'eyeshadow', 'beauty'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'maybelline-super-stay-vinyl-ink-liquid-lipcolor',
+    name: 'Maybelline Super Stay Vinyl Ink Liquid Lipcolor',
+    description:
+      'Long-wear liquid lipcolor for beauty looks and outfit styling.',
+    features: [
+      'Long-wear',
+      'Transfer-resistant',
+      'High pigment',
+      'Many shades',
+      'Affordable',
+    ],
+    matchKeywords: ['makeup', 'outfit', 'OOTD', 'beauty'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'command-picture-hanging-strips',
+    name: 'Command Picture Hanging Strips',
+    description:
+      'Damage-free hanging strips for affordable home decor and rental-friendly makeovers.',
+    features: [
+      'Damage-free',
+      'No nails',
+      'Strong hold',
+      'Easy to use',
+      'Budget-friendly',
+    ],
+    matchKeywords: [
+      'budget DIY',
+      'home decor',
+      'money-saving',
+      'rental friendly',
+    ],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'ring-video-doorbell-4',
+    name: 'Ring Video Doorbell 4',
+    description: 'Smart doorbell for tech reviews and smart home setup.',
+    features: [
+      '1080p',
+      'Two-way talk',
+      'Motion detection',
+      'Easy install',
+      'Battery-powered',
+    ],
+    matchKeywords: ['tech review', 'smart home', 'gadget'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'renogy-100w-solar-starter-kit',
+    name: 'Renogy 100W Solar Starter Kit',
+    description:
+      'Off-grid solar starter kit with transparent cost and practical DIY setup.',
+    features: [
+      '100W',
+      'Monocrystalline',
+      'Charge controller',
+      'Off-grid',
+      'Value',
+    ],
+    matchKeywords: ['off-grid', 'solar', 'self-sufficient'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'dewalt-20v-max-cordless-drill-combo-kit',
+    name: 'DeWalt 20V MAX Cordless Drill Combo Kit',
+    description:
+      'Cordless power tool kit for DIY projects, farm renovation, and home upgrades.',
+    features: [
+      'Cordless',
+      'Powerful',
+      'Durable',
+      'Multi-tool',
+      'Farm/DIY-ready',
+    ],
+    matchKeywords: ['DIY project', 'farm renovation', 'home improvement'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'coleman-sundome-4-person-tent',
+    name: 'Coleman Sundome 4-Person Tent',
+    description: 'Family camping tent for couples, kids, and weekend camping.',
+    features: ['Easy setup', 'Rainfly', 'Spacious', 'Value', 'Family-friendly'],
+    matchKeywords: ['camping', 'couple daily', 'parenting'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'anker-nebula-capsule-portable-projector',
+    name: 'Anker Nebula Capsule Portable Projector',
+    description:
+      'Portable smart projector for road trips, date nights, and daily entertainment.',
+    features: [
+      'Portable',
+      '1080p',
+      'Auto focus',
+      'Built-in battery',
+      'Outdoor-ready',
+    ],
+    matchKeywords: ['road trip', 'date night', 'travel vlog', 'product review'],
+    commission: '10%',
+    freeSample: true,
+  },
+  {
+    id: 'camp-string-lights',
+    name: 'Camp String Lights',
+    description: '',
+    features: [],
+    matchKeywords: [],
     commission: '15%',
     freeSample: true,
   },
-  {
-    id: 'softcloud',
-    name: 'SoftCloud Hoodie',
-    description: 'Brushed cotton oversized hoodie for cozy daily styling.',
-    features: ['Soft-touch', 'Oversized', '6 colors'],
-    matchKeywords: ['cozy routine', 'loungewear', 'casual outfits'],
-    commission: '12%',
-    freeSample: true,
-  },
-  {
-    id: 'daylight',
-    name: 'Daylight Tote',
-    description: 'A structured carryall for commute, coffee and content days.',
-    features: ['Water-resistant', 'Laptop sleeve', 'Vegan leather'],
-    matchKeywords: ['coffee runs', 'commute', 'workday', 'laptop'],
-    commission: '18%',
-    freeSample: false,
-  },
 ];
+
+const legacyDefaultProductIds = new Set([
+  'cloudlayer',
+  'softcloud',
+  'daylight',
+]);
+
+const productNameKey = (name: string) => name.trim().toLowerCase();
+
+export function mergeSavedProducts(savedProducts: Product[]) {
+  const saved = savedProducts.filter(
+    (product) => !legacyDefaultProductIds.has(product.id),
+  );
+  const savedByName = new Map(
+    saved.map((product) => [productNameKey(product.name), product]),
+  );
+  const mergedDefaults = defaultProducts.map(
+    (product) => savedByName.get(productNameKey(product.name)) || product,
+  );
+  const defaultNames = new Set(
+    defaultProducts.map((product) => productNameKey(product.name)),
+  );
+  return [
+    ...mergedDefaults,
+    ...saved.filter(
+      (product) => !defaultNames.has(productNameKey(product.name)),
+    ),
+  ];
+}
 
 const concepts = [
   {
