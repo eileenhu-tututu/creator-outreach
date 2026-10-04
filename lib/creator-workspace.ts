@@ -14,7 +14,12 @@ export type CollectedVideo = {
   url: string;
   transcript?: string;
   spokenTranscriptProvider?: 'gemini' | 'supadata' | 'none';
-  spokenTranscriptStatus?: 'ready' | 'processing' | 'not_found' | 'failed';
+  spokenTranscriptStatus?:
+    | 'ready'
+    | 'processing'
+    | 'not_found'
+    | 'failed'
+    | 'timed_out';
   geminiStatus?: 'ready' | 'ready_no_speech' | 'failed';
   status: 'ready' | 'processing' | 'failed';
   jobId?: string;

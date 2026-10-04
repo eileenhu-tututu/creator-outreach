@@ -100,6 +100,12 @@ const productImage =
   'https://images.unsplash.com/photo-1576188973526-0e5d7047b0cf?w=900&h=700&fit=crop&auto=format';
 const initialTranscripts = [''];
 const minimumProductMatchScore = 75;
+const directMessageTargetMinimum = 220;
+const directMessagePreferredMaximum = 285;
+const directMessageMaximum = 300;
+const transcriptPollTimeoutMs = 25_000;
+const creatorProcessingTimeoutMs = 90_000;
+const videoProcessingConcurrency = 3;
 
 type Result = OutreachResult;
 type InlineEmailImage = {
@@ -115,7 +121,12 @@ type VisualResultPayload = {
   visualJobId?: string;
   spokenTranscript?: string;
   spokenTranscriptProvider?: 'gemini' | 'supadata' | 'none';
-  spokenTranscriptStatus?: 'ready' | 'processing' | 'not_found' | 'failed';
+  spokenTranscriptStatus?:
+    | 'ready'
+    | 'processing'
+    | 'not_found'
+    | 'failed'
+    | 'timed_out';
   transcriptJobId?: string;
   geminiStatus?: 'ready' | 'ready_no_speech' | 'failed';
   geminiError?: string;
@@ -140,37 +151,143 @@ const escapeHtml = (value: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 
-const compactDmPhrase = (value: string, maxLength: number) => {
-  const normalized = value
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[.!?]+$/, '');
-  if (normalized.length <= maxLength) return normalized;
-  const candidate = normalized.slice(0, maxLength + 1);
-  const lastSpace = candidate.lastIndexOf(' ');
-  return candidate
-    .slice(0, lastSpace > maxLength * 0.6 ? lastSpace : maxLength)
-    .replace(/[,:;.!?—-]+$/, '');
+type DirectMessageModule = {
+  text: string;
+  compact?: string;
+  optional?: boolean;
+};
+type TranscriptOutcome =
+  | 'ready'
+  | 'no_speech'
+  | 'service_failed'
+  | 'timed_out';
+
+const normalizeDmSentence = (value: string) => {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
 };
 
-const finishDirectMessage = (body: string, suffix: string) => {
-  const normalizedBody = body.replace(/\s+/g, ' ').trim();
-  const normalizedSuffix = suffix.replace(/\s+/g, ' ').trim();
-  const full = `${normalizedBody} ${normalizedSuffix}`.trim();
-  if (full.length <= 300) return full;
+const hasIncompleteDmEnding = (value: string) =>
+  /\b(?:and|for|with|to|we['’]d)\s*[.!?]*$/i.test(value.trim());
 
-  const bodyLimit = Math.max(140, 299 - normalizedSuffix.length);
-  const candidate = normalizedBody.slice(0, bodyLimit + 1);
-  const lastSentence = Math.max(
-    candidate.lastIndexOf('. '),
-    candidate.lastIndexOf('? '),
-    candidate.lastIndexOf('! '),
+const chooseDmVariant = (values: string[], seed: string, offset = 0) => {
+  const score = Array.from(seed).reduce(
+    (total, character) => total + character.charCodeAt(0),
+    offset,
   );
-  const shortened =
-    lastSentence >= 150
-      ? candidate.slice(0, lastSentence + 1)
-      : `${compactDmPhrase(candidate, bodyLimit - 1)}.`;
-  return `${shortened} ${normalizedSuffix}`.trim();
+  return values[Math.abs(score) % values.length];
+};
+
+const composeDirectMessage = (
+  modules: DirectMessageModule[],
+  closingSentence: string,
+) => {
+  const closing = normalizeDmSentence(closingSentence);
+  let active = modules.map((module) => ({
+    ...module,
+    text: normalizeDmSentence(module.text),
+    compact: module.compact
+      ? normalizeDmSentence(module.compact)
+      : undefined,
+  }));
+  const render = () =>
+    [...active.map((module) => module.text), closing]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  let message = render();
+  for (let index = active.length - 1; index >= 0; index -= 1) {
+    if (message.length <= directMessagePreferredMaximum) break;
+    if (active[index].compact && active[index].compact !== active[index].text) {
+      active[index] = { ...active[index], text: active[index].compact || '' };
+      message = render();
+    }
+  }
+  for (let index = active.length - 1; index >= 0; index -= 1) {
+    if (message.length <= directMessagePreferredMaximum) break;
+    if (active[index].optional) {
+      active = active.filter((_, moduleIndex) => moduleIndex !== index);
+      message = render();
+    }
+  }
+
+  if (message.length > directMessageMaximum) {
+    active = active.filter((module) => !module.optional);
+    message = render();
+  }
+  if (message.length > directMessageMaximum) {
+    const safeFallback = [
+      active[0]?.compact || active[0]?.text,
+      active[1]?.compact || active[1]?.text,
+      closing,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    message = safeFallback;
+  }
+  if (message.length > directMessageMaximum) {
+    message = [
+      'Your recent content stood out.',
+      'I have a product idea that could fit naturally into what your audience already enjoys.',
+      'Open to seeing it?',
+      closing,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  if (message.length < directMessageTargetMinimum) {
+    const omittedOptional = modules
+      .filter(
+        (module) =>
+          module.optional &&
+          !active.some(
+            (activeModule) =>
+              activeModule.text === normalizeDmSentence(module.text),
+          ),
+      )
+      .map((module) => normalizeDmSentence(module.compact || module.text));
+    for (const sentence of omittedOptional) {
+      const next = [...active.map((module) => module.text), sentence, closing]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (next.length <= directMessagePreferredMaximum) message = next;
+      if (message.length >= directMessageTargetMinimum) break;
+    }
+  }
+
+  if (hasIncompleteDmEnding(message)) {
+    message = `${message.replace(/\b(?:and|for|with|to|we['’]d)\s*[.!?]*$/i, '').trim()}.`;
+  }
+  return message;
+};
+
+const runWithConcurrency = async <Item, ResultValue>(
+  items: Item[],
+  concurrency: number,
+  worker: (item: Item) => Promise<ResultValue>,
+) => {
+  let nextIndex = 0;
+  const results: ResultValue[] = [];
+  const runners = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await worker(items[currentIndex]);
+      }
+    },
+  );
+  await Promise.all(runners);
+  return results;
 };
 
 const analyticsErrorCode = (error: unknown, fallback: string) => {
@@ -305,6 +422,9 @@ export default function Home() {
   const [resultEdited, setResultEdited] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const generatedResultRef = useRef<Result | null>(null);
+  const transcriptPollsRef = useRef(
+    new Map<string, Promise<TranscriptOutcome>>(),
+  );
   const trackedEditedMessageIdsRef = useRef(new Set<string>());
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [visibleWorkflowAnchor, setVisibleWorkflowAnchor] =
@@ -365,6 +485,31 @@ export default function Home() {
     () => transcripts.filter((item) => item.trim()).length,
     [transcripts],
   );
+  const readySpokenTranscriptCount = useMemo(
+    () =>
+      collectedVideos.filter(
+        (video) =>
+          Boolean(video.transcript?.trim()) &&
+          video.spokenTranscriptStatus !== 'failed' &&
+          video.spokenTranscriptStatus !== 'not_found' &&
+          video.spokenTranscriptStatus !== 'timed_out',
+      ).length,
+    [collectedVideos],
+  );
+  const pendingSpokenTranscriptCount = useMemo(
+    () =>
+      collectedVideos.filter(
+        (video) =>
+          video.spokenTranscriptStatus === 'processing' ||
+          (video.status === 'processing' && Boolean(video.jobId)),
+      ).length,
+    [collectedVideos],
+  );
+  const creatorAnalysisCanContinue =
+    filledVideos > 0 &&
+    (readySpokenTranscriptCount >= 3 ||
+      pendingSpokenTranscriptCount === 0 ||
+      collectedVideos.length === 0);
   const structuredCreatorProfile = useMemo(
     () =>
       mergeCreatorProfiles(
@@ -992,6 +1137,19 @@ export default function Home() {
             : /travel|camp|outdoor|road/.test(creatorContext)
               ? 'outdoor shoots, road trips, or days spent carrying creator essentials'
               : 'the real-life routines and content formats your audience already follows';
+    const compactContentScene = /diy|craft|wood|tool|market/.test(
+      creatorContext,
+    )
+      ? 'your workshop and DIY content'
+      : /food|drink|coffee|recipe|kitchen/.test(creatorContext)
+        ? 'your recipe and creator content'
+        : /beauty|makeup|skin|hair/.test(creatorContext)
+          ? 'your beauty tutorials'
+          : /fashion|outfit|style|wear/.test(creatorContext)
+            ? 'your styling content'
+            : /travel|camp|outdoor|road/.test(creatorContext)
+              ? 'your outdoor and travel content'
+              : 'the content your audience already enjoys';
     const productFunctions = features.slice(0, 2).join(' and ').toLowerCase();
     const sampleOffer = freeSample
       ? 'We’d be happy to send one for you to try, with full creative control.'
@@ -999,37 +1157,109 @@ export default function Home() {
     const commissionLine = commission
       ? `If it feels relevant, the collaboration includes ${commission} affiliate commission.`
       : 'If it feels relevant, we’d be happy to share the collaboration details.';
-    const dmTopic = compactDmPhrase(topic, 18);
-    const dmLead = compactDmPhrase(angle.dmLead, 32);
-    const dmProduct = compactDmPhrase(product, 24);
-    const dmFeature = compactDmPhrase(feature.toLowerCase(), 22);
-    const dmScene = compactDmPhrase(contentScene, 30);
-    const dmCommission = commission
-      ? `${commission} affiliate commission included.`
-      : 'Happy to share details.';
-    const dmOffer = freeSample
-      ? `We’d love to send one. Open to it?`
-      : 'Open to hearing more?';
-    let dm = finishDirectMessage(
-      `Love your take on ${dmTopic}, especially ${dmLead}. ${dmProduct} could fit naturally into ${dmScene}, with ${dmFeature} your audience can actually use. ${dmOffer}`,
-      dmCommission,
+    const dmSeed = `${handle}:${'id' in angle ? angle.id : 'fallback-angle'}:${product}:${tone}`;
+    const opener = chooseDmVariant(
+      [
+        `I’ve been enjoying how you explore ${topic}, especially ${angle.dmLead}`,
+        `Your recent take on ${topic} stood out, especially ${angle.dmLead}`,
+        `The way you cover ${topic} feels thoughtful, especially ${angle.dmLead}`,
+        `${angle.dmLead} made your recent ${topic} content especially relatable`,
+      ],
+      dmSeed,
     );
+    const compactOpener = chooseDmVariant(
+      [
+        `Your recent ${topic} content stood out`,
+        `I’ve been enjoying your perspective on ${topic}`,
+        `Your take on ${topic} feels genuinely useful`,
+      ],
+      dmSeed,
+      11,
+    );
+    const bridge = chooseDmVariant(
+      [
+        `${product} could fit naturally into ${contentScene}`,
+        `I can picture ${product} working naturally in ${contentScene}`,
+        `${product} feels relevant to the real-life moments you show in ${contentScene}`,
+      ],
+      dmSeed,
+      23,
+    );
+    const compactBridge = `${product} could fit ${compactContentScene} while giving viewers a useful product moment`;
+    const audienceValue = chooseDmVariant(
+      [
+        `${feature} gives your audience a practical reason to care without forcing a sponsor-style segment`,
+        `Its ${feature.toLowerCase()} connects to the useful, real-life ideas your audience already follows you for`,
+        `That makes ${feature.toLowerCase()} useful inside the content your audience already enjoys`,
+      ],
+      dmSeed,
+      37,
+    );
+    const offer = freeSample
+      ? 'We’d be happy to send one for you to try with full creative control. Would you be open to it?'
+      : 'Would you be open to seeing the collaboration details?';
+    const compactOffer = freeSample
+      ? 'Happy to send one for you to try. Open to it?'
+      : 'Open to hearing more?';
+    const dmCommission = commission
+      ? `${commission} affiliate commission is included.`
+      : 'Happy to share the collaboration details.';
+    const buildDm = (
+      customOpener = opener,
+      customBridge = bridge,
+      customOffer = offer,
+    ) =>
+      composeDirectMessage(
+        [
+          { text: customOpener, compact: compactOpener },
+          { text: customBridge, compact: compactBridge },
+          {
+            text: audienceValue,
+            compact: `It gives your audience a useful, natural product moment`,
+            optional: true,
+          },
+          {
+            text: customOffer,
+            compact: compactOffer,
+          },
+        ],
+        dmCommission,
+      );
+    let dm = buildDm();
     let email = `Hi ${name},\n\nI’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. It feels like your audience values ${audienceNeed.toLowerCase()}.\n\n${product}’s ${productFunctions} could fit naturally into ${contentScene}. That gives you a clear, useful product moment inside the formats your audience already watches, without forcing a separate sponsor-style segment.\n\n${sampleOffer} Would you be open to taking a look?\n\n${commissionLine}\n\n— Partnerships team`;
     if (tone === 'shorter') {
-      dm = finishDirectMessage(
-        `Loved your ${dmTopic} content—especially ${dmLead}. ${dmProduct} could fit naturally into ${dmScene}. ${dmOffer}`,
-        dmCommission,
+      dm = buildDm(
+        compactOpener,
+        compactBridge,
+        compactOffer,
       );
       email = `Hi ${name},\n\nI’ve been enjoying your ${topic} content, especially ${angle.dmLead}. Since your audience values ${audienceNeed.toLowerCase()}, ${product}’s ${productFunctions} could fit naturally into ${contentScene}.\n\nOpen to taking a look? ${commissionLine}\n\n— Partnerships team`;
     } else if (tone === 'casual') {
-      dm = finishDirectMessage(
-        `Really enjoying your ${dmTopic} content—especially ${dmLead}. ${dmProduct} feels like an easy fit for ${dmScene}, with ${dmFeature} your audience could actually use. ${dmOffer}`,
-        dmCommission,
+      dm = buildDm(
+        chooseDmVariant(
+          [
+            `Your ${topic} content caught my eye, especially ${angle.dmLead}`,
+            `Really enjoying the way you talk about ${topic}`,
+            `Your recent ${topic} post felt refreshingly real`,
+          ],
+          dmSeed,
+          51,
+        ),
+        chooseDmVariant(
+          [
+            `${product} feels like an easy fit for ${contentScene}`,
+            `I could see ${product} showing up naturally in ${contentScene}`,
+          ],
+          dmSeed,
+          63,
+        ),
+        compactOffer,
       );
     } else if (tone === 'soft') {
-      dm = finishDirectMessage(
-        `I’ve been enjoying your ${dmTopic} content, especially ${dmLead}. ${dmProduct} may fit naturally into ${dmScene}. Happy to share more if it feels relevant—no pressure.`,
-        dmCommission,
+      dm = buildDm(
+        `I’ve been enjoying your perspective on ${topic}`,
+        `${product} may fit naturally into ${contentScene}`,
+        'Happy to share more if it feels relevant—no pressure.',
       );
       email = `Hi ${name},\n\nI’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. ${product}’s ${productFunctions} may fit naturally into ${contentScene}.\n\nHappy to share more if it feels relevant—no pressure at all. ${commissionLine}\n\n— Partnerships team`;
     }
@@ -1285,90 +1515,170 @@ export default function Home() {
     setActiveVideo(0);
   };
 
-  const pollTranscript = async (video: CollectedVideo) => {
-    if (!video.jobId) return;
-    setCheckingTranscriptIds((current) =>
-      current.includes(video.id) ? current : [...current, video.id],
-    );
-    try {
-      for (let attempt = 0; attempt < 14; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1500));
-        const response = await fetch('/api/transcript-status', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...demoCredentialHeaders(),
-          },
-          body: JSON.stringify({ jobId: video.jobId }),
+  const pollTranscript = (
+    video: CollectedVideo,
+    creatorDeadline = Date.now() + creatorProcessingTimeoutMs,
+  ): Promise<TranscriptOutcome> => {
+    if (!video.jobId) return Promise.resolve('service_failed');
+    const existing = transcriptPollsRef.current.get(video.id);
+    if (existing) return existing;
+
+    const task = (async (): Promise<TranscriptOutcome> => {
+      const videoDeadline = Math.min(
+        Date.now() + transcriptPollTimeoutMs,
+        creatorDeadline,
+      );
+      setCheckingTranscriptIds((current) =>
+        current.includes(video.id) ? current : [...current, video.id],
+      );
+      setCollectedVideos((current) =>
+        current.map((item) =>
+          item.id === video.id
+            ? { ...item, spokenTranscriptStatus: 'processing' }
+            : item,
+        ),
+      );
+
+      const setTerminalStatus = (
+        status: 'not_found' | 'failed' | 'timed_out',
+        clearJob: boolean,
+      ) =>
+        setCollectedVideos((current) =>
+          current.map((item) =>
+            item.id === video.id
+              ? {
+                  ...item,
+                  status: videoScript(item) ? 'ready' : 'failed',
+                  spokenTranscriptStatus: status,
+                  jobId: clearJob ? undefined : item.jobId || video.jobId,
+                }
+              : item,
+          ),
+        );
+
+      try {
+        while (Date.now() < videoDeadline) {
+          const waitMs = Math.min(1500, videoDeadline - Date.now());
+          if (waitMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+          }
+          if (Date.now() >= videoDeadline) break;
+
+          const controller = new AbortController();
+          const requestTimer = window.setTimeout(
+            () => controller.abort(),
+            Math.min(5000, Math.max(500, videoDeadline - Date.now())),
+          );
+          let response: Response;
+          try {
+            response = await fetch('/api/transcript-status', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...demoCredentialHeaders(),
+              },
+              body: JSON.stringify({ jobId: video.jobId }),
+              signal: controller.signal,
+            });
+          } finally {
+            window.clearTimeout(requestTimer);
+          }
+          const data = (await response.json()) as {
+            status?: 'ready' | 'processing' | 'no_speech' | 'failed';
+            transcript?: string;
+          };
+          if (!response.ok || data.status === 'failed') {
+            setTerminalStatus('failed', false);
+            trackEvent('analysis_failed', {
+              run_id: activeRunId,
+              stage: 'transcript',
+              error_code: 'TRANSCRIPT_SERVICE_FAILED',
+            });
+            setCollectionMessage(
+              'Transcript service failed for one video. Use “Retry transcript” on its card.',
+            );
+            return 'service_failed';
+          }
+          if (data.status === 'processing') continue;
+          if (data.status === 'ready' && data.transcript) {
+            const readyVideo: CollectedVideo = {
+              ...video,
+              transcript: data.transcript,
+              spokenTranscriptProvider: 'supadata',
+              spokenTranscriptStatus: 'ready',
+              status: 'ready',
+              jobId: undefined,
+              ...transcriptQuality(video, data.transcript),
+            };
+            setCollectedVideos((current) =>
+              current.map((item) =>
+                item.id === video.id ? { ...item, ...readyVideo } : item,
+              ),
+            );
+            if (selectedVideoIds.includes(video.id)) {
+              const selectedIndex = selectedVideoIds.indexOf(video.id);
+              setTranscripts((current) =>
+                current.map((script, index) =>
+                  index === selectedIndex ? videoScript(readyVideo) : script,
+                ),
+              );
+            }
+            setCollectionMessage(
+              'A spoken transcript is ready. Select “Use script” to add it to the workspace.',
+            );
+            return 'ready';
+          }
+
+          setTerminalStatus('not_found', true);
+          setCollectionMessage(
+            'No reliable speech was found in one video. Other videos will keep processing.',
+          );
+          return 'no_speech';
+        }
+
+        setTerminalStatus('timed_out', false);
+        trackEvent('analysis_failed', {
+          run_id: activeRunId,
+          stage: 'transcript',
+          error_code: 'TRANSCRIPT_TIMEOUT',
         });
-        const data = (await response.json()) as {
-          status?: 'ready' | 'processing' | 'failed';
-          transcript?: string;
-        };
-        if (!response.ok) {
+        setCollectionMessage(
+          'One transcript timed out. Continue with ready samples or choose “Retry transcript” on that card.',
+        );
+        return 'timed_out';
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          setTerminalStatus('timed_out', false);
           trackEvent('analysis_failed', {
             run_id: activeRunId,
             stage: 'transcript',
-            error_code: 'TRANSCRIPT_STATUS_FAILED',
+            error_code: 'TRANSCRIPT_TIMEOUT',
           });
-          return;
-        }
-        if (data.status === 'processing') continue;
-        if (data.status === 'ready' && data.transcript) {
-          const readyVideo: CollectedVideo = {
-            ...video,
-            transcript: data.transcript,
-            spokenTranscriptProvider: 'supadata',
-            spokenTranscriptStatus: 'ready',
-            status: 'ready',
-            ...transcriptQuality(video, data.transcript),
-          };
-          setCollectedVideos((current) =>
-            current.map((item) =>
-              item.id === video.id ? { ...item, ...readyVideo } : item,
-            ),
-          );
-          if (selectedVideoIds.includes(video.id)) {
-            const selectedIndex = selectedVideoIds.indexOf(video.id);
-            setTranscripts((current) =>
-              current.map((script, index) =>
-                index === selectedIndex ? videoScript(readyVideo) : script,
-              ),
-            );
-          }
           setCollectionMessage(
-            'The script is ready. Select “Use script” to add it to the workspace.',
+            'One transcript timed out. Continue with ready samples or choose “Retry transcript” on that card.',
           );
-        } else {
-          setCollectedVideos((current) =>
-            current.map((item) =>
-              item.id === video.id
-                ? {
-                    ...item,
-                    status: videoScript(item) ? 'ready' : 'failed',
-                    spokenTranscriptStatus: 'not_found',
-                    jobId: undefined,
-                  }
-                : item,
-            ),
-          );
+          return 'timed_out';
         }
-        return;
+        setTerminalStatus('failed', false);
+        trackEvent('analysis_failed', {
+          run_id: activeRunId,
+          stage: 'transcript',
+          error_code: analyticsErrorCode(error, 'TRANSCRIPT_STATUS_FAILED'),
+        });
+        setCollectionMessage(
+          'Transcript service failed for one video. Use “Retry transcript” on its card.',
+        );
+        return 'service_failed';
+      } finally {
+        setCheckingTranscriptIds((current) =>
+          current.filter((id) => id !== video.id),
+        );
       }
-    } catch (error) {
-      trackEvent('analysis_failed', {
-        run_id: activeRunId,
-        stage: 'transcript',
-        error_code: analyticsErrorCode(error, 'TRANSCRIPT_STATUS_FAILED'),
-      });
-      setCollectionMessage(
-        'The script status could not be checked. Try “Check transcript” again.',
-      );
-    } finally {
-      setCheckingTranscriptIds((current) =>
-        current.filter((id) => id !== video.id),
-      );
-    }
+    })();
+
+    transcriptPollsRef.current.set(video.id, task);
+    void task.finally(() => transcriptPollsRef.current.delete(video.id));
+    return task;
   };
 
   const applyVisualResult = (
@@ -1679,6 +1989,7 @@ export default function Home() {
     if (!collectionInput.trim()) return;
     const runId = crypto.randomUUID();
     const collectionStartedAt = performance.now();
+    const creatorDeadline = Date.now() + creatorProcessingTimeoutMs;
     const creatorHash = creatorIdHash(collectionInput);
     let transcriptEventSent = false;
     const trackTranscriptCompleted = (videoCount: number) => {
@@ -1777,9 +2088,31 @@ export default function Home() {
       setTranscripts(nextTranscripts.length ? nextTranscripts : ['']);
       setActiveVideo(0);
       setUsername(data.channel?.title || collectionInput);
-      videos
-        .filter((video) => video.status === 'processing' && video.jobId)
-        .forEach((video) => void pollTranscript(video));
+      const pendingTranscriptVideos = merged.filter(
+        (video) =>
+          (video.spokenTranscriptStatus === 'processing' ||
+            video.status === 'processing') &&
+          Boolean(video.jobId),
+      );
+      if (pendingTranscriptVideos.length) {
+        void runWithConcurrency(
+          pendingTranscriptVideos,
+          videoProcessingConcurrency,
+          (video) => pollTranscript(video, creatorDeadline),
+        ).then((outcomes) => {
+          const readyCount = outcomes.filter(
+            (outcome) => outcome === 'ready',
+          ).length;
+          const timedOutCount = outcomes.filter(
+            (outcome) => outcome === 'timed_out',
+          ).length;
+          if (timedOutCount > 0) {
+            setCollectionMessage(
+              `${readyCount} new transcript${readyCount === 1 ? '' : 's'} ready · ${timedOutCount} timed out. Continue with current samples or retry timed-out cards.`,
+            );
+          }
+        });
+      }
       if (!videos.length) {
         setCollectionMessage(
           data.message || 'No matching recent videos were found.',
@@ -1798,8 +2131,21 @@ export default function Home() {
         void (async () => {
           let completed = 0;
           let successful = 0;
-          for (let index = 0; index < pending.length; index += 2) {
-            const batch = pending.slice(index, index + 2);
+          for (
+            let index = 0;
+            index < pending.length;
+            index += videoProcessingConcurrency
+          ) {
+            if (Date.now() >= creatorDeadline) {
+              setCollectionMessage(
+                `The 90-second creator limit was reached. Continue with ${successful} usable sample${successful === 1 ? '' : 's'} while remaining cards finish in the background.`,
+              );
+              return;
+            }
+            const batch = pending.slice(
+              index,
+              index + videoProcessingConcurrency,
+            );
             const outcomes = await Promise.all(
               batch.map((video) => analyzeVisualText(video, undefined, true)),
             );
@@ -2471,14 +2817,25 @@ export default function Home() {
                               {video.transcript
                                 ? `Ready via ${video.spokenTranscriptProvider === 'supadata' ? 'Supadata fallback' : 'Gemini'}`
                                 : video.spokenTranscriptStatus === 'processing'
-                                  ? 'Supadata is preparing the transcript…'
-                                  : video.geminiStatus === 'failed'
-                                    ? 'Gemini failed · no fallback transcript yet'
-                                    : 'No reliable speech found'}
+                                  ? 'Processing — up to 25 seconds'
+                                  : video.spokenTranscriptStatus === 'timed_out'
+                                    ? 'Timed out — Retry transcript'
+                                    : video.spokenTranscriptStatus === 'failed'
+                                      ? 'Service failed — Retry transcript'
+                                      : video.spokenTranscriptStatus ===
+                                          'not_found'
+                                        ? 'No speech found'
+                                        : video.geminiStatus === 'failed'
+                                          ? 'Service failed — no fallback transcript yet'
+                                          : 'No speech found'}
                             </p>
                           </div>
                           {video.jobId &&
-                          video.spokenTranscriptStatus === 'processing' ? (
+                          (video.spokenTranscriptStatus === 'processing' ||
+                            video.spokenTranscriptStatus === 'timed_out' ||
+                            video.spokenTranscriptStatus === 'failed' ||
+                            (video.status === 'processing' &&
+                              !video.spokenTranscriptStatus)) ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -2493,7 +2850,10 @@ export default function Home() {
                               )}
                               {checkingTranscript
                                 ? 'Reading script…'
-                                : 'Check transcript'}
+                                : video.spokenTranscriptStatus === 'timed_out' ||
+                                    video.spokenTranscriptStatus === 'failed'
+                                  ? 'Retry transcript'
+                                  : 'Check transcript'}
                             </Button>
                           ) : null}
                           {video.platform === 'tiktok' ? (
@@ -2639,6 +2999,19 @@ export default function Home() {
                 <Upload className="size-3.5" /> Edit any script here · spoken
                 and on-screen text stay intact before structured analysis
               </div>
+              {collectedVideos.length > 0 ? (
+                <output
+                  className={`mt-3 block rounded-[14px] px-4 py-3 text-xs font-semibold ${creatorAnalysisCanContinue ? 'bg-[#dff2df] text-[#276b36]' : 'bg-[#fff0c9] text-[#78580b]'}`}
+                >
+                  {readySpokenTranscriptCount >= 3
+                    ? `${readySpokenTranscriptCount} valid spoken transcripts are ready. You can continue now${pendingSpokenTranscriptCount ? ` while ${pendingSpokenTranscriptCount} remaining video${pendingSpokenTranscriptCount === 1 ? '' : 's'} finish in the background` : ''}.`
+                    : pendingSpokenTranscriptCount > 0
+                      ? `${readySpokenTranscriptCount}/3 valid spoken transcripts ready. Each video gets up to 25 seconds; the Creator run will not wait longer than 90 seconds.`
+                      : filledVideos > 0
+                        ? `Processing finished with ${readySpokenTranscriptCount} spoken transcript${readySpokenTranscriptCount === 1 ? '' : 's'}. You can continue with the usable samples available.`
+                        : 'Processing finished without a usable script. Retry a timed-out card or add a transcript manually.'}
+                </output>
+              ) : null}
             </section>
             <section
               id="creator-insights"
@@ -2675,6 +3048,7 @@ export default function Home() {
                     onClick={() => void analyzeSelectedStructures()}
                     disabled={
                       selectedVideoIds.length === 0 ||
+                      !creatorAnalysisCanContinue ||
                       structuringVideoIds.length > 0
                     }
                     className="h-9 rounded-full border-[#6d5a94]/25 bg-white px-4 text-xs font-black text-[#27322d]"
@@ -3238,7 +3612,7 @@ export default function Home() {
                           : undefined
                     }
                   >
-                    {result.dm.length} characters · ideal 180–300
+                    {result.dm.length} characters · target 220–300
                   </span>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">

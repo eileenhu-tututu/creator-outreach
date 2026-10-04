@@ -54,8 +54,10 @@ export async function POST(request: Request) {
   return Response.json({
     status: transcript
       ? 'ready'
-      : data.status === 'failed' || data.status === 'completed'
-        ? 'failed'
+      : data.status === 'completed'
+        ? 'no_speech'
+        : data.status === 'failed'
+          ? 'failed'
         : 'processing',
     transcript,
   });
