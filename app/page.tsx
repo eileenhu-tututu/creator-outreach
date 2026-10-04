@@ -68,7 +68,6 @@ import {
 } from '@/lib/creator-profile';
 import { BrandNav } from '@/components/brand-nav';
 import { DemoModeBanner } from '@/components/demo-mode-banner';
-import { OutreachStory } from '@/components/outreach-story';
 import { creatorIdHash, trackEvent } from '@/lib/analytics';
 import { demoCredentialHeaders } from '@/lib/demo-credentials';
 import {
@@ -302,7 +301,6 @@ export default function Home() {
   const [customEmailHtml, setCustomEmailHtml] = useState(starterEmailHtml);
   const [customEmailCss, setCustomEmailCss] = useState(starterEmailCss);
   const [templateMessage, setTemplateMessage] = useState('');
-  const [activeShowcase, setActiveShowcase] = useState(0);
   const [celebration, setCelebration] = useState<'match' | 'message' | null>(
     null,
   );
@@ -798,15 +796,6 @@ export default function Home() {
     void refreshGmailStatus();
     window.addEventListener('message', handleOauthMessage);
     return () => window.removeEventListener('message', handleOauthMessage);
-  }, []);
-
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const timer = window.setInterval(
-      () => setActiveShowcase((current) => (current + 1) % 3),
-      3800,
-    );
-    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -1564,11 +1553,15 @@ export default function Home() {
     });
     setCollecting(true);
     setCollectionMessage(
-      collectionSource === 'youtube-shorts'
+      collectionSource === 'youtube'
         ? isYouTubeVideoInput(collectionInput)
-          ? 'Reading this Short with Gemini…'
-          : 'Finding the creator’s latest 7 Shorts…'
-        : 'Reading public TikTok videos…',
+          ? 'Reading this YouTube video with Gemini…'
+          : 'Finding the creator’s latest 7 regular videos…'
+        : collectionSource === 'youtube-shorts'
+          ? isYouTubeVideoInput(collectionInput)
+            ? 'Reading this Short with Gemini…'
+            : 'Finding the creator’s latest 7 Shorts…'
+          : 'Reading public TikTok videos…',
     );
     try {
       trackEvent('analysis_started', {
@@ -1585,7 +1578,7 @@ export default function Home() {
         body: JSON.stringify({
           source: collectionSource,
           input: collectionInput,
-          maxVideos: collectionSource === 'youtube-shorts' ? 7 : 8,
+          maxVideos: collectionSource === 'tiktok' ? 8 : 7,
         }),
       });
       const data = (await response.json()) as {
@@ -1644,12 +1637,16 @@ export default function Home() {
         setCollectionMessage(
           data.message || 'No matching recent videos were found.',
         );
-      } else if (collectionSource === 'youtube-shorts') {
+      } else if (
+        collectionSource === 'youtube' ||
+        collectionSource === 'youtube-shorts'
+      ) {
         const pending = merged.filter(
-          (video) => video.platform === 'youtube-shorts' && !videoScript(video),
+          (video) => video.platform !== 'tiktok' && !videoScript(video),
         );
+        const videoLabel = collectionSource === 'youtube' ? 'videos' : 'Shorts';
         setCollectionMessage(
-          `${videos.length} Shorts found. Reading scripts now — results will appear one by one.`,
+          `${videos.length} ${videoLabel} found. Reading scripts now — results will appear one by one.`,
         );
         void (async () => {
           let completed = 0;
@@ -1663,12 +1660,12 @@ export default function Home() {
             successful += outcomes.filter(Boolean).length;
             trackTranscriptCompleted(successful);
             setCollectionMessage(
-              `Reading Shorts: ${completed}/${pending.length} finished · ${successful} usable so far.`,
+              `Reading ${videoLabel}: ${completed}/${pending.length} finished · ${successful} usable so far.`,
             );
           }
           setCollectionMessage(
             successful
-              ? `${successful}/${pending.length} Shorts produced usable scripts or screen text. You can select them now.`
+              ? `${successful}/${pending.length} ${videoLabel} produced usable scripts or screen text. You can select them now.`
               : 'The videos were found, but Gemini could not extract usable speech or screen text. Review the errors on each card.',
           );
         })();
@@ -1969,8 +1966,10 @@ export default function Home() {
       )}
 
       <section className="mx-auto max-w-[1440px] px-4 pb-8 pt-6 sm:px-5 lg:px-10 lg:pt-10">
-        <div className="hero-studio">
-          <div className="relative z-10 max-w-[670px]">
+        <div className="relative overflow-hidden rounded-[36px] border border-black/8 bg-[#e8f9ef] px-6 py-10 shadow-[0_24px_70px_rgba(39,50,45,.08)] sm:px-10 lg:px-14 lg:py-14">
+          <div className="pointer-events-none absolute -right-16 -top-24 size-72 rounded-full bg-[#c9b9ff]/35 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-20 right-24 size-56 rounded-full bg-[#ff8a78]/20 blur-3xl" />
+          <div className="relative z-10 max-w-[760px]">
             <div className="mb-6 flex flex-wrap items-center gap-2">
               <Badge className="rounded-full bg-[#27322d] px-3 py-1.5 text-[#eef5eb]">
                 TIKTOK SHOP · CREATOR BD
@@ -2004,139 +2003,7 @@ export default function Home() {
               </span>
             </div>
           </div>
-          <div className="showcase-wrap" aria-label="Product workflow preview">
-            <div className="showcase-live" aria-live="polite">
-              <span>
-                <i /> LIVE WORKFLOW
-              </span>
-              <strong>
-                {
-                  [
-                    'Reading creator videos',
-                    'Ranking the product catalog',
-                    'Building the email preview',
-                  ][activeShowcase]
-                }
-              </strong>
-            </div>
-            <span className="float-emoji emoji-one" aria-hidden="true">
-              ✨
-            </span>
-            <span className="float-emoji emoji-two" aria-hidden="true">
-              🫶
-            </span>
-            <span className="float-emoji emoji-three" aria-hidden="true">
-              💌
-            </span>
-            <div className="showcase-stage">
-              <article
-                className={`showcase-phone phone-sage ${activeShowcase === 0 ? 'is-active' : ''}`}
-              >
-                <div className="phone-bar">
-                  <span>9:41</span>
-                  <span>● ●</span>
-                </div>
-                <div className="phone-progress">
-                  <i style={{ width: '33%' }} />
-                </div>
-                <p className="screen-kicker">CREATOR SCAN · 01</p>
-                <div className="flex items-center gap-3">
-                  <img
-                    src={creatorImages[1]}
-                    alt="Creator profile"
-                    className="size-14 rounded-[18px] object-cover"
-                  />
-                  <div>
-                    <h3>@rainydayrachel</h3>
-                    <p className="screen-note">3 scripts ready · lifestyle</p>
-                  </div>
-                </div>
-                <div className="mt-5 rounded-[18px] bg-white/75 p-4">
-                  <p className="screen-note">STRONGEST SIGNAL</p>
-                  <p className="mt-2 text-sm font-bold leading-5">
-                    “Waterproof and cute at the same time?”
-                  </p>
-                </div>
-                <div className="screen-feedback">🥳 Context found!</div>
-              </article>
-              <article
-                className={`showcase-phone phone-coral ${activeShowcase === 1 ? 'is-active' : ''}`}
-              >
-                <div className="phone-bar">
-                  <span>9:41</span>
-                  <span>● ●</span>
-                </div>
-                <div className="phone-progress">
-                  <i style={{ width: '66%' }} />
-                </div>
-                <p className="screen-kicker">PRODUCT MATCH · 02</p>
-                <div className="score-orb">
-                  94<span>%</span>
-                </div>
-                <h3 className="text-center">CloudLayer Jacket</h3>
-                <p className="mt-1 text-center text-xs text-[#27322d]/55">
-                  Best fit across your catalog
-                </p>
-                <div className="mt-5 flex flex-wrap justify-center gap-1.5">
-                  <span className="screen-chip">Waterproof</span>
-                  <span className="screen-chip">Cute fit</span>
-                  <span className="screen-chip">Seattle</span>
-                </div>
-                <div className="screen-feedback">🎯 Match locked!</div>
-              </article>
-              <article
-                className={`showcase-phone phone-lilac ${activeShowcase === 2 ? 'is-active' : ''}`}
-              >
-                <div className="phone-bar">
-                  <span>9:41</span>
-                  <span>● ●</span>
-                </div>
-                <div className="phone-progress">
-                  <i style={{ width: '100%' }} />
-                </div>
-                <p className="screen-kicker">OUTREACH · 03</p>
-                <div className="message-bubble">
-                  <p className="screen-note">SUBJECT</p>
-                  <p className="mt-1 font-bold">A rainy-day collab idea ☔</p>
-                </div>
-                <div className="mt-3 rounded-[18px] bg-white p-4 text-xs leading-5 text-[#27322d]/70">
-                  Your Seattle rain moment got us. This jacket feels genuinely
-                  aligned with your audience…
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    document
-                      .querySelector('#results')
-                      ?.scrollIntoView({ behavior: 'smooth' })
-                  }
-                  className="mini-send"
-                >
-                  Review message <Send className="size-3.5" />
-                </button>
-                <div className="screen-feedback">💬 Ready to send!</div>
-              </article>
-            </div>
-            <div className="showcase-dots">
-              {['Creator scan', 'Product match', 'Outreach ready'].map(
-                (label, index) => (
-                  <button
-                    type="button"
-                    key={label}
-                    onClick={() => setActiveShowcase(index)}
-                    aria-label={`Show ${label}`}
-                    aria-pressed={activeShowcase === index}
-                    className={activeShowcase === index ? 'is-active' : ''}
-                  >
-                    <span>{String(index + 1).padStart(2, '0')}</span>
-                    {label}
-                  </button>
-                ),
-              )}
-            </div>
-          </div>
         </div>
-        <OutreachStory />
         <div className="process-rail">
           <a href="#generator">
             <span>01</span>
@@ -2193,58 +2060,94 @@ export default function Home() {
                 />
               </label>
             </div>
-            <div className="mt-6 rounded-[18px] bg-black p-4 text-white">
-              <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div
+              className="mt-6 rounded-[18px] p-4 text-white"
+              style={{ backgroundColor: '#27322d' }}
+            >
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
                   <Video className="size-4 text-[#ff5400]" /> Submit a Creator
                   <span className="inline-flex items-center gap-1 rounded-full bg-white/8 px-2 py-1 text-[10px] font-semibold text-white/55">
                     <ShieldCheck className="size-3" /> Auto-saved on this device
                   </span>
                 </div>
-                <fieldset className="flex w-fit rounded-full bg-white/8 p-1">
-                  <legend className="sr-only">Collection source</legend>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCollectionSource('youtube-shorts');
-                      setCollectionInput('');
-                      setCollectionMessage('');
-                    }}
-                    aria-pressed={collectionSource === 'youtube-shorts'}
-                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-bold transition ${collectionSource === 'youtube-shorts' ? 'bg-white text-black' : 'text-white/55 hover:text-white'}`}
-                  >
-                    <Video className="size-3.5" /> YouTube Shorts
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCollectionSource('tiktok');
-                      setCollectionInput('');
-                      setCollectionMessage('');
-                    }}
-                    aria-pressed={collectionSource === 'tiktok'}
-                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-bold transition ${collectionSource === 'tiktok' ? 'bg-[#ff5400] text-black' : 'text-white/55 hover:text-white'}`}
-                  >
-                    <Clapperboard className="size-3.5" /> TikTok
-                  </button>
-                </fieldset>
               </div>
               <p className="mb-4 max-w-2xl text-xs leading-5 text-white/55">
-                This is the account submission step. Paste a YouTube account,
-                handle, channel URL, or Short below, then use the orange submit
-                button before selecting any scripts.
+                Choose one content channel, submit the creator, then review and
+                select the scripts that should influence product matching.
               </p>
+              <fieldset className="mb-4 grid gap-2 sm:grid-cols-3">
+                <legend className="sr-only">Collection source</legend>
+                {(
+                  [
+                    {
+                      id: 'youtube',
+                      label: 'YouTube',
+                      note: 'Latest 7 regular videos',
+                    },
+                    {
+                      id: 'youtube-shorts',
+                      label: 'YouTube Shorts',
+                      note: 'Latest 7 short videos',
+                    },
+                    {
+                      id: 'tiktok',
+                      label: 'TikTok',
+                      note: 'Up to 8 public videos',
+                    },
+                  ] as const
+                ).map((source) => {
+                  const selected = collectionSource === source.id;
+                  return (
+                    <button
+                      type="button"
+                      key={source.id}
+                      onClick={() => {
+                        setCollectionSource(source.id);
+                        setCollectionInput('');
+                        setCollectionMessage('');
+                      }}
+                      aria-pressed={selected}
+                      className={`rounded-[14px] border p-3 text-left transition ${selected ? 'border-[#ff8b52] bg-[#ff5400] text-black shadow-[0_5px_0_#a93600]' : 'border-white/15 bg-white/8 text-white hover:border-white/35 hover:bg-white/12'}`}
+                    >
+                      <span className="flex items-center gap-2 text-sm font-black">
+                        {source.id === 'tiktok' ? (
+                          <Clapperboard className="size-4" />
+                        ) : (
+                          <Video className="size-4" />
+                        )}
+                        {source.label}
+                      </span>
+                      <span
+                        className={`mt-1 block text-[10px] font-semibold ${selected ? 'text-black/65' : 'text-white/45'}`}
+                      >
+                        {source.note}
+                      </span>
+                    </button>
+                  );
+                })}
+              </fieldset>
               <div className="grid gap-3">
-                {collectionSource === 'youtube-shorts' ? (
+                {collectionSource !== 'tiktok' ? (
                   <div className="text-xs font-semibold text-white/55">
-                    YouTube channel, handle, or Shorts URL
+                    {collectionSource === 'youtube'
+                      ? 'YouTube channel, handle, or video URL'
+                      : 'YouTube channel, handle, or Shorts URL'}
                     <Input
-                      aria-label="YouTube channel, handle, or Shorts URL"
+                      aria-label={
+                        collectionSource === 'youtube'
+                          ? 'YouTube channel, handle, or video URL'
+                          : 'YouTube channel, handle, or Shorts URL'
+                      }
                       value={collectionInput}
                       onChange={(event) =>
                         setCollectionInput(event.target.value)
                       }
-                      placeholder="@creator, channel URL, or Shorts URL"
+                      placeholder={
+                        collectionSource === 'youtube'
+                          ? '@creator, channel URL, or video URL'
+                          : '@creator, channel URL, or Shorts URL'
+                      }
                       className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/35 focus-visible:border-[#ff5400] focus-visible:ring-0"
                     />
                   </div>
@@ -2271,22 +2174,28 @@ export default function Home() {
                 >
                   {collecting ? (
                     <RefreshCw className="animate-spin" />
-                  ) : collectionSource === 'youtube-shorts' ? (
+                  ) : collectionSource !== 'tiktok' ? (
                     <Video />
                   ) : (
                     <Clapperboard />
                   )}{' '}
-                  {collectionSource === 'youtube-shorts'
+                  {collectionSource === 'youtube'
                     ? isYouTubeVideoInput(collectionInput)
-                      ? 'Submit Short & analyze video'
-                      : 'Submit Creator & collect latest 7 Shorts'
-                    : 'Submit video links & build candidate pool'}
+                      ? 'Submit video & analyze content'
+                      : 'Submit Creator & collect latest 7 videos'
+                    : collectionSource === 'youtube-shorts'
+                      ? isYouTubeVideoInput(collectionInput)
+                        ? 'Submit Short & analyze video'
+                        : 'Submit Creator & collect latest 7 Shorts'
+                      : 'Submit video links & build candidate pool'}
                 </Button>
               </div>
               <p className="mt-3 text-xs leading-5 text-white/40">
-                {collectionSource === 'youtube-shorts'
-                  ? 'Enter a channel name, @handle, channel URL, or one Shorts URL. Channels return the latest 7 Shorts; a video URL analyzes that Short only.'
-                  : 'Paste up to 8 public links. Spoken scripts load first; upload the saved video to Gemini when the visuals carry important text.'}
+                {collectionSource === 'youtube'
+                  ? 'Enter a channel name, @handle, channel URL, or one video URL. Channels return the latest 7 regular videos; a video URL analyzes that video only.'
+                  : collectionSource === 'youtube-shorts'
+                    ? 'Enter a channel name, @handle, channel URL, or one Shorts URL. Channels return the latest 7 Shorts; a video URL analyzes that Short only.'
+                    : 'Paste up to 8 public links. Spoken scripts load first; upload the saved video to Gemini when the visuals carry important text.'}
               </p>
               {collectionMessage && (
                 <p
@@ -2302,10 +2211,10 @@ export default function Home() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-black">Candidate pool</p>
                   <p className="text-xs text-black/45">
-                    {collectionSource === 'youtube-shorts' &&
+                    {collectionSource !== 'tiktok' &&
                     isYouTubeVideoInput(collectionInput)
-                      ? '1 Short ready for review'
-                      : `${selectedVideoIds.length} selected · aim for 5–${collectionSource === 'youtube-shorts' ? '7' : '8'} useful samples`}
+                      ? '1 video ready for review'
+                      : `${selectedVideoIds.length} selected · aim for 5–${collectionSource === 'tiktok' ? '8' : '7'} useful samples`}
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -2504,8 +2413,8 @@ export default function Home() {
                   No videos collected yet
                 </p>
                 <p className="mt-1 text-xs text-black/40">
-                  Search a YouTube Shorts creator or paste public TikTok links
-                  above. Real scripts will appear only after collection.
+                  Choose YouTube, YouTube Shorts, or TikTok above. Real scripts
+                  will appear only after you submit a creator.
                 </p>
               </div>
             )}
@@ -2543,7 +2452,7 @@ export default function Home() {
                           <p className="text-[11px] font-black uppercase tracking-[.1em] text-black/45">
                             Script {index + 1}
                             {sourceVideo
-                              ? ` · ${sourceVideo.platform === 'tiktok' ? 'TikTok' : 'Short'}`
+                              ? ` · ${sourceVideo.platform === 'tiktok' ? 'TikTok' : sourceVideo.platform === 'youtube' ? 'YouTube' : 'Short'}`
                               : ' · Manual'}
                           </p>
                           {sourceVideo && (

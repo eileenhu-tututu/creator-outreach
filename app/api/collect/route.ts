@@ -1,6 +1,6 @@
 import { requestCredential } from '@/lib/server-credentials';
 
-type CollectionSource = 'youtube-shorts' | 'tiktok';
+type CollectionSource = 'youtube' | 'youtube-shorts' | 'tiktok';
 
 type GoogleApiError = {
   error?: {
@@ -316,18 +316,24 @@ const youtubeDurationSeconds = (duration = '') => {
   );
 };
 
-const buildYouTubeVideos = (sourceVideos: YouTubeVideoItem[]) =>
+const buildYouTubeVideos = (
+  sourceVideos: YouTubeVideoItem[],
+  source: Extract<CollectionSource, 'youtube' | 'youtube-shorts'>,
+) =>
   sourceVideos.map(
     (video): CollectedVideo => ({
       id: video.id,
-      platform: 'youtube-shorts',
+      platform: source,
       title: video.snippet.title,
       publishedAt: video.snippet.publishedAt,
       thumbnail:
         video.snippet.thumbnails?.high?.url ||
         video.snippet.thumbnails?.medium?.url ||
         video.snippet.thumbnails?.default?.url,
-      url: `https://www.youtube.com/shorts/${video.id}`,
+      url:
+        source === 'youtube-shorts'
+          ? `https://www.youtube.com/shorts/${video.id}`
+          : `https://www.youtube.com/watch?v=${video.id}`,
       transcript: '',
       status: 'processing',
       visualText: [],
@@ -341,7 +347,11 @@ const buildYouTubeVideos = (sourceVideos: YouTubeVideoItem[]) =>
     }),
   );
 
-async function collectSingleYouTubeShort(videoId: string, youtubeKey: string) {
+async function collectSingleYouTubeVideo(
+  videoId: string,
+  youtubeKey: string,
+  source: Extract<CollectionSource, 'youtube' | 'youtube-shorts'>,
+) {
   const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
   detailsUrl.search = new URLSearchParams({
     part: 'snippet,contentDetails',
@@ -364,27 +374,31 @@ async function collectSingleYouTubeShort(videoId: string, youtubeKey: string) {
     );
   }
 
-  const videos = buildYouTubeVideos([video]);
+  const videos = buildYouTubeVideos([video], source);
   return Response.json({
-    source: 'youtube-shorts',
+    source,
     channel: {
       id: video.snippet.channelId || '',
       title: video.snippet.channelTitle || 'YouTube creator',
     },
     sampleLimit: 1,
     videos,
-    message: 'Short found. Its script is loading now.',
+    message:
+      source === 'youtube-shorts'
+        ? 'Short found. Its script is loading now.'
+        : 'Video found. Its script is loading now.',
   });
 }
 
-async function collectYouTubeShorts(
+async function collectYouTubeVideos(
   input: string,
   maxVideos: number,
   youtubeKey: string,
+  source: Extract<CollectionSource, 'youtube' | 'youtube-shorts'>,
 ) {
   const directVideoId = youtubeVideoId(input);
   if (directVideoId) {
-    return collectSingleYouTubeShort(directVideoId, youtubeKey);
+    return collectSingleYouTubeVideo(directVideoId, youtubeKey, source);
   }
 
   const yt = 'https://www.googleapis.com/youtube/v3';
@@ -489,14 +503,17 @@ async function collectYouTubeShorts(
 
   if (!uploadedVideoIds.length) {
     return Response.json({
-      source: 'youtube-shorts',
+      source,
       channel: {
         id: channelId,
         title: channelTitle,
         avatar: channelAvatar,
       },
       videos: [],
-      message: 'No Shorts were found on this YouTube channel.',
+      message:
+        source === 'youtube-shorts'
+          ? 'No Shorts were found on this YouTube channel.'
+          : 'No regular videos were found on this YouTube channel.',
     });
   }
 
@@ -512,9 +529,10 @@ async function collectYouTubeShorts(
     items?: YouTubeVideoItem[];
   };
   const latest = (detailsData.items || [])
-    .filter(
-      (video) => youtubeDurationSeconds(video.contentDetails?.duration) <= 180,
-    )
+    .filter((video) => {
+      const seconds = youtubeDurationSeconds(video.contentDetails?.duration);
+      return source === 'youtube-shorts' ? seconds <= 180 : seconds > 180;
+    })
     .sort(
       (left, right) =>
         new Date(right.snippet.publishedAt).getTime() -
@@ -522,10 +540,10 @@ async function collectYouTubeShorts(
     )
     .slice(0, maxVideos);
 
-  const videos = buildYouTubeVideos(latest);
+  const videos = buildYouTubeVideos(latest, source);
 
   return Response.json({
-    source: 'youtube-shorts',
+    source,
     channel: {
       id: channelId,
       title: channelTitle,
@@ -534,8 +552,12 @@ async function collectYouTubeShorts(
     sampleLimit: maxVideos,
     videos,
     message: latest.length
-      ? `${latest.length} Shorts found. Scripts are loading progressively.`
-      : 'No YouTube Shorts were found on this channel.',
+      ? source === 'youtube-shorts'
+        ? `${latest.length} Shorts found. Scripts are loading progressively.`
+        : `${latest.length} YouTube videos found. Scripts are loading progressively.`
+      : source === 'youtube-shorts'
+        ? 'No YouTube Shorts were found on this channel.'
+        : 'No regular YouTube videos were found on this channel.',
   });
 }
 
@@ -657,7 +679,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (source === 'youtube-shorts') {
+  if (source === 'youtube' || source === 'youtube-shorts') {
     const youtubeKey = requestCredential(
       request,
       'x-demo-youtube-api-key',
@@ -668,12 +690,12 @@ export async function POST(request: Request) {
         {
           error: 'integration_not_configured',
           message:
-            'Add YOUTUBE_API_KEY to find YouTube Shorts. Gemini is used immediately afterward to read each video.',
+            'Add YOUTUBE_API_KEY to find YouTube videos. Gemini is used immediately afterward to read each video.',
         },
         { status: 503 },
       );
     }
-    return collectYouTubeShorts(input, maxVideos, youtubeKey);
+    return collectYouTubeVideos(input, maxVideos, youtubeKey, source);
   }
 
   if (source === 'tiktok') {

@@ -3,7 +3,7 @@ import type { CreatorProfile } from '@/lib/creator-profile';
 import type { ProductMatch } from '@/lib/products';
 import type { SentChannelMap } from '@/lib/outreach-history';
 
-export type CollectionSource = 'youtube-shorts' | 'tiktok';
+export type CollectionSource = 'youtube' | 'youtube-shorts' | 'tiktok';
 
 export type CollectedVideo = {
   id: string;
