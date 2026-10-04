@@ -8,6 +8,7 @@ type AnalyticsProperties = Record<
 type ClientEnv = {
   VITE_MIXPANEL_TOKEN?: string;
   VITE_APP_VERSION?: string;
+  VITE_APP_MODE?: 'demo' | 'production';
   PROD?: boolean;
   DEV?: boolean;
 };
@@ -36,10 +37,13 @@ export const initAnalytics = () => {
     persistence: 'localStorage',
     debug: Boolean(clientEnv?.DEV),
   });
+  const appMode = clientEnv?.VITE_APP_MODE || 'demo';
   mixpanel.register({
     session_id: getSessionId(),
     environment: clientEnv?.PROD ? 'production' : 'development',
     app_version: clientEnv?.VITE_APP_VERSION || 'mvp-mixpanel-1',
+    app_mode: appMode,
+    test_run: appMode !== 'production',
   });
   initialized = true;
   return true;
