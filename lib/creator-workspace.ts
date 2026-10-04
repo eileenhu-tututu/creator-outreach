@@ -1,6 +1,7 @@
 import type { ConversationAngle } from '@/lib/conversation-angles';
 import type { CreatorProfile } from '@/lib/creator-profile';
 import type { ProductMatch } from '@/lib/products';
+import type { SentChannelMap } from '@/lib/outreach-history';
 
 export type CollectionSource = 'youtube-shorts' | 'tiktok';
 
@@ -69,6 +70,7 @@ export type CreatorWorkspaceSnapshot = {
   activeRunId?: string | null;
   activeHistoryId: string | null;
   activeSentAt: string | null;
+  sentChannels?: SentChannelMap;
 };
 
 type ArchivedWorkspace = {

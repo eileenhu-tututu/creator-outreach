@@ -8,6 +8,8 @@ export type OutreachChannel =
   | 'Email'
   | 'Other';
 
+export type SentChannelMap = Partial<Record<OutreachChannel, string>>;
+
 export type ReplyStatus =
   | 'pending'
   | 'no_reply'
@@ -33,9 +35,29 @@ export type OutreachHistoryItem = {
   generatedEmail?: string;
   sentAt?: string;
   sentChannel?: OutreachChannel;
+  sentChannels?: SentChannelMap;
   replyStatus?: ReplyStatus;
   replyRecordedAt?: string;
   workspaceId?: string;
+};
+
+export const outreachChannels: OutreachChannel[] = [
+  'TikTok DM',
+  'Instagram DM',
+  'WhatsApp',
+  'Email',
+  'Other',
+];
+
+export const sentChannelsFor = (
+  item?: Pick<OutreachHistoryItem, 'sentAt' | 'sentChannel' | 'sentChannels'>,
+): SentChannelMap => {
+  if (!item) return {};
+  if (item.sentChannels && Object.keys(item.sentChannels).length) {
+    return item.sentChannels;
+  }
+  if (item.sentAt) return { [item.sentChannel || 'Other']: item.sentAt };
+  return {};
 };
 
 export const replyStatusLabels: Record<ReplyStatus, string> = {

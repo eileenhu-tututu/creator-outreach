@@ -26,8 +26,10 @@ import { BrandNav } from '@/components/brand-nav';
 import { creatorIdHash, trackEvent } from '@/lib/analytics';
 import {
   noReplyAvailability,
+  outreachChannels,
   readOutreachHistory,
   replyStatusLabels,
+  sentChannelsFor,
   writeOutreachHistory,
   type OutreachHistoryItem,
   type ReplyStatus,
@@ -86,9 +88,12 @@ export default function HistoryPage() {
     );
 
   const markSent = (item: OutreachHistoryItem) => {
+    const channel = item.sentChannel || 'Other';
+    const sentAt = new Date().toISOString();
     update(item.id, {
-      sentAt: new Date().toISOString(),
-      sentChannel: item.sentChannel || 'Other',
+      sentAt,
+      sentChannel: channel,
+      sentChannels: { ...sentChannelsFor(item), [channel]: sentAt },
       replyStatus: 'pending',
       replyRecordedAt: undefined,
     });
@@ -97,7 +102,7 @@ export default function HistoryPage() {
       message_id: item.id,
       creator_id_hash: creatorIdHash(item.username),
       product_id: item.productId,
-      channel: (item.sentChannel || 'Other').toLowerCase().replaceAll(' ', '_'),
+      channel: channel.toLowerCase().replaceAll(' ', '_'),
       send_method: 'manual_mark',
     });
   };
@@ -176,6 +181,7 @@ export default function HistoryPage() {
             filtered.map((item) => {
               const currentStatus = item.replyStatus || 'pending';
               const noReply = noReplyAvailability(item.sentAt);
+              const sentChannels = sentChannelsFor(item);
               return (
                 <article
                   key={item.id}
@@ -278,6 +284,17 @@ export default function HistoryPage() {
                             >
                               {replyStatusLabels[currentStatus]}
                             </Badge>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {outreachChannels.map((channel) => (
+                              <span
+                                key={channel}
+                                className={`rounded-full px-2.5 py-1 text-[10px] font-black ${sentChannels[channel] ? 'bg-[#aee8c5] text-[#174b2a]' : 'bg-white text-[#27322d]/40'}`}
+                              >
+                                {channel} ·{' '}
+                                {sentChannels[channel] ? 'Sent' : 'Not sent'}
+                              </span>
+                            ))}
                           </div>
                           <div className="mt-4 block text-xs font-bold text-[#27322d]/55">
                             <span>Reply status</span>

@@ -82,10 +82,13 @@ import {
   type OutreachResult,
 } from '@/lib/creator-workspace';
 import {
+  outreachChannels,
   readOutreachHistory,
+  sentChannelsFor,
   updateOutreachHistoryItem,
   writeOutreachHistory,
   type OutreachChannel,
+  type SentChannelMap,
 } from '@/lib/outreach-history';
 
 const creatorImages = [
@@ -258,6 +261,7 @@ export default function Home() {
     useState('generator');
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [activeSentAt, setActiveSentAt] = useState<string | null>(null);
+  const [sentChannels, setSentChannels] = useState<SentChannelMap>({});
   const [outreachChannel, setOutreachChannel] =
     useState<OutreachChannel>('TikTok DM');
   const [generating, setGenerating] = useState(false);
@@ -378,6 +382,10 @@ export default function Home() {
     activeHistoryItem?.replyStatus &&
     activeHistoryItem.replyStatus !== 'pending',
   );
+  const selectedChannelSentAt = sentChannels[outreachChannel];
+  const sentChannelCount = outreachChannels.filter((channel) =>
+    Boolean(sentChannels[channel]),
+  ).length;
   const workflowSteps = [
     {
       label: 'Submit Creator',
@@ -419,7 +427,7 @@ export default function Home() {
     {
       label: 'Mark as sent',
       href: '#results',
-      complete: Boolean(activeSentAt),
+      complete: sentChannelCount > 0 || Boolean(activeSentAt),
     },
     {
       label: 'Record reply result',
@@ -476,11 +484,13 @@ export default function Home() {
       activeRunId,
       activeHistoryId,
       activeSentAt,
+      sentChannels,
     }),
     [
       activeHistoryId,
       activeRunId,
       activeSentAt,
+      sentChannels,
       angleSignature,
       bio,
       collectedVideos,
@@ -648,6 +658,12 @@ export default function Home() {
       setActiveRunId(historyItem?.runId || saved.activeRunId || null);
       setActiveHistoryId(historyItem?.id || saved.activeHistoryId);
       setActiveSentAt(historyItem?.sentAt || saved.activeSentAt);
+      setSentChannels(
+        historyItem
+          ? sentChannelsFor(historyItem)
+          : saved.sentChannels ||
+              (saved.activeSentAt ? { Other: saved.activeSentAt } : {}),
+      );
       if (historyItem?.sentChannel) setOutreachChannel(historyItem.sentChannel);
       setCollectionMessage(
         restoreId
@@ -678,6 +694,7 @@ export default function Home() {
       setActiveRunId(historyItem.runId || null);
       setActiveHistoryId(historyItem.id);
       setActiveSentAt(historyItem.sentAt || null);
+      setSentChannels(sentChannelsFor(historyItem));
       if (historyItem.sentChannel) setOutreachChannel(historyItem.sentChannel);
       setCollectionMessage(
         'The saved message was restored. This older record does not include its original video cache.',
@@ -982,6 +999,7 @@ export default function Home() {
     setResult(null);
     setActiveHistoryId(null);
     setActiveSentAt(null);
+    setSentChannels({});
   };
 
   const matchProducts = () => {
@@ -1016,6 +1034,7 @@ export default function Home() {
         setResult(null);
         setActiveHistoryId(null);
         setActiveSentAt(null);
+        setSentChannels({});
         trackEvent('analysis_failed', {
           run_id: activeRunId,
           stage: 'product_match',
@@ -1053,6 +1072,7 @@ export default function Home() {
       setResultEdited(false);
       setActiveHistoryId(historyId);
       setActiveSentAt(null);
+      setSentChannels({});
       setOutreachChannel('TikTok DM');
       setGenerating(false);
       setCelebration('message');
@@ -1135,20 +1155,27 @@ export default function Home() {
     channel: OutreachChannel = outreachChannel,
     sendMethod: 'manual_mark' | 'gmail' = 'manual_mark',
   ) => {
-    if (!result || !activeHistoryId || activeSentAt) return;
+    if (!result || !activeHistoryId || sentChannels[channel]) return;
     const sentAt = new Date().toISOString();
+    const nextSentChannels = { ...sentChannels, [channel]: sentAt };
     updateOutreachHistoryItem(activeHistoryId, {
       score: result.score,
       hook: result.hook,
       dm: result.dm,
       subject: result.subject,
       email: result.email,
-      sentAt,
-      sentChannel: channel,
-      replyStatus: 'pending',
-      replyRecordedAt: undefined,
+      sentChannels: nextSentChannels,
+      ...(activeSentAt
+        ? {}
+        : {
+            sentAt,
+            sentChannel: channel,
+            replyStatus: 'pending' as const,
+            replyRecordedAt: undefined,
+          }),
     });
-    setActiveSentAt(sentAt);
+    setSentChannels(nextSentChannels);
+    setActiveSentAt((current) => current || sentAt);
     setOutreachChannel(channel);
     trackMessageEditIfNeeded();
     trackEvent('outreach_sent', {
@@ -1160,7 +1187,7 @@ export default function Home() {
       send_method: sendMethod,
     });
     setSendMessage(
-      `Marked as sent via ${channel}. Reply tracking is ready in History.`,
+      `Marked as sent via ${channel}. You can still publish through another channel.`,
     );
   };
 
@@ -2148,11 +2175,11 @@ export default function Home() {
           <article className="light-card p-5 sm:p-7">
             <div className="grid gap-4 sm:grid-cols-[.8fr_1.2fr]">
               <label className="field-label">
-                Username
+                Creator name · auto-filled after submit
                 <Input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="@creator"
+                  placeholder="Optional — the detected channel name appears here"
                   className="light-input mt-2"
                 />
               </label>
@@ -2169,8 +2196,7 @@ export default function Home() {
             <div className="mt-6 rounded-[18px] bg-black p-4 text-white">
               <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                 <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
-                  <Video className="size-4 text-[#ff5400]" /> Multi-channel
-                  collection
+                  <Video className="size-4 text-[#ff5400]" /> Submit a Creator
                   <span className="inline-flex items-center gap-1 rounded-full bg-white/8 px-2 py-1 text-[10px] font-semibold text-white/55">
                     <ShieldCheck className="size-3" /> Auto-saved on this device
                   </span>
@@ -2203,9 +2229,14 @@ export default function Home() {
                   </button>
                 </fieldset>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <p className="mb-4 max-w-2xl text-xs leading-5 text-white/55">
+                This is the account submission step. Paste a YouTube account,
+                handle, channel URL, or Short below, then use the orange submit
+                button before selecting any scripts.
+              </p>
+              <div className="grid gap-3">
                 {collectionSource === 'youtube-shorts' ? (
-                  <div className="flex-1 text-xs font-semibold text-white/55">
+                  <div className="text-xs font-semibold text-white/55">
                     YouTube channel, handle, or Shorts URL
                     <Input
                       aria-label="YouTube channel, handle, or Shorts URL"
@@ -2218,7 +2249,7 @@ export default function Home() {
                     />
                   </div>
                 ) : (
-                  <div className="flex-1 text-xs font-semibold text-white/55">
+                  <div className="text-xs font-semibold text-white/55">
                     Public TikTok video links
                     <Textarea
                       aria-label="Public TikTok video links"
@@ -2236,7 +2267,7 @@ export default function Home() {
                 <Button
                   onClick={collectCreatorContent}
                   disabled={collecting || !collectionInput.trim()}
-                  className="h-10 shrink-0 rounded-full bg-[#ff5400] px-5 font-bold text-black hover:bg-[#ff6a1a]"
+                  className="h-12 w-full rounded-[14px] border-2 border-[#ff8b52] bg-[#ff5400] px-5 text-base font-black text-black shadow-[0_7px_0_#a93600] transition hover:translate-y-0.5 hover:bg-[#ff6a1a] hover:shadow-[0_5px_0_#a93600] disabled:translate-y-0 disabled:border-white/10 disabled:bg-white/10 disabled:text-white/35 disabled:shadow-none"
                 >
                   {collecting ? (
                     <RefreshCw className="animate-spin" />
@@ -2247,9 +2278,9 @@ export default function Home() {
                   )}{' '}
                   {collectionSource === 'youtube-shorts'
                     ? isYouTubeVideoInput(collectionInput)
-                      ? 'Analyze this Short'
-                      : 'Collect latest 7'
-                    : 'Build candidate pool'}
+                      ? 'Submit Short & analyze video'
+                      : 'Submit Creator & collect latest 7 Shorts'
+                    : 'Submit video links & build candidate pool'}
                 </Button>
               </div>
               <p className="mt-3 text-xs leading-5 text-white/40">
@@ -2995,18 +3026,37 @@ export default function Home() {
                   <div>
                     <p className="font-black">Outreach tracking</p>
                     <p className="text-xs leading-5 text-[#27322d]/55">
-                      {activeSentAt
-                        ? `Sent ${new Date(activeSentAt).toLocaleString()}. Reply status starts as Pending.`
+                      {sentChannelCount
+                        ? `${sentChannelCount} of ${outreachChannels.length} channels marked as sent. Reply tracking starts from the first send.`
                         : 'After sending outside this app, choose the channel and mark this message as sent.'}
                     </p>
                   </div>
                 </div>
-                {activeSentAt ? (
+                {sentChannelCount ? (
                   <p className="mt-3 text-xs font-bold text-[#27322d]/55">
                     “No reply” becomes available in History after the seven-day
                     observation window.
                   </p>
                 ) : null}
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {outreachChannels.map((channel) => {
+                    const channelSentAt = sentChannels[channel];
+                    return (
+                      <span
+                        key={channel}
+                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black ${channelSentAt ? 'bg-[#aee8c5] text-[#174b2a]' : 'bg-white/70 text-[#27322d]/45'}`}
+                        title={
+                          channelSentAt
+                            ? `Sent ${new Date(channelSentAt).toLocaleString()}`
+                            : 'Not sent'
+                        }
+                      >
+                        {channelSentAt ? <Check className="size-3" /> : null}
+                        {channel} · {channelSentAt ? 'Sent' : 'Not sent'}
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex flex-col gap-2 sm:min-w-[360px] sm:flex-row">
                 <Select
@@ -3014,7 +3064,6 @@ export default function Home() {
                   onValueChange={(value) =>
                     setOutreachChannel(value as OutreachChannel)
                   }
-                  disabled={Boolean(activeSentAt)}
                 >
                   <SelectTrigger className="h-11 w-full rounded-full border-[#27322d]/15 bg-white px-4 text-[#27322d] sm:w-[170px]">
                     <SelectValue />
@@ -3030,11 +3079,13 @@ export default function Home() {
                 <Button
                   type="button"
                   onClick={() => markCurrentAsSent()}
-                  disabled={Boolean(activeSentAt)}
+                  disabled={Boolean(selectedChannelSentAt)}
                   className="h-11 flex-1 rounded-full bg-[#27322d] px-5 font-bold text-white hover:bg-[#39463f] disabled:bg-[#aee8c5] disabled:text-[#174b2a] disabled:opacity-100"
                 >
-                  {activeSentAt ? <Check /> : <Send />}
-                  {activeSentAt ? 'Sent · Pending' : 'Mark as sent'}
+                  {selectedChannelSentAt ? <Check /> : <Send />}
+                  {selectedChannelSentAt
+                    ? `${outreachChannel} sent`
+                    : `Mark ${outreachChannel} as sent`}
                 </Button>
               </div>
             </article>
