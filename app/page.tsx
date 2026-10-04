@@ -108,6 +108,23 @@ type InlineEmailImage = {
   filename: string;
   cid: string;
 };
+type VisualResultPayload = {
+  error?: string;
+  status?: 'ready' | 'processing' | 'failed';
+  visualJobId?: string;
+  spokenTranscript?: string;
+  spokenTranscriptProvider?: 'gemini' | 'supadata' | 'none';
+  spokenTranscriptStatus?: 'ready' | 'processing' | 'not_found' | 'failed';
+  transcriptJobId?: string;
+  geminiStatus?: 'ready' | 'ready_no_speech' | 'failed';
+  geminiError?: string;
+  visualText?: string[];
+  creatorSignals?: string[];
+  contentType?: string;
+  qualityScore?: number;
+  isDanceOnly?: boolean;
+  qualityReason?: string;
+};
 const cleanHandle = (value: string) =>
   value.trim().replace(/^@/, '') || 'creator';
 const isYouTubeVideoInput = (value: string) =>
@@ -121,6 +138,39 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+
+const compactDmPhrase = (value: string, maxLength: number) => {
+  const normalized = value
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!?]+$/, '');
+  if (normalized.length <= maxLength) return normalized;
+  const candidate = normalized.slice(0, maxLength + 1);
+  const lastSpace = candidate.lastIndexOf(' ');
+  return candidate
+    .slice(0, lastSpace > maxLength * 0.6 ? lastSpace : maxLength)
+    .replace(/[,:;.!?—-]+$/, '');
+};
+
+const finishDirectMessage = (body: string, suffix: string) => {
+  const normalizedBody = body.replace(/\s+/g, ' ').trim();
+  const normalizedSuffix = suffix.replace(/\s+/g, ' ').trim();
+  const full = `${normalizedBody} ${normalizedSuffix}`.trim();
+  if (full.length <= 300) return full;
+
+  const bodyLimit = Math.max(140, 299 - normalizedSuffix.length);
+  const candidate = normalizedBody.slice(0, bodyLimit + 1);
+  const lastSentence = Math.max(
+    candidate.lastIndexOf('. '),
+    candidate.lastIndexOf('? '),
+    candidate.lastIndexOf('! '),
+  );
+  const shortened =
+    lastSentence >= 150
+      ? candidate.slice(0, lastSentence + 1)
+      : `${compactDmPhrase(candidate, bodyLimit - 1)}.`;
+  return `${shortened} ${normalizedSuffix}`.trim();
+};
 
 const analyticsErrorCode = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message.toLowerCase() : '';
@@ -947,15 +997,38 @@ export default function Home() {
     const commissionLine = commission
       ? `If it feels relevant, the collaboration includes ${commission} affiliate commission.`
       : 'If it feels relevant, we’d be happy to share the collaboration details.';
-    let dm = `I’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. It feels like your audience values ${audienceNeed.toLowerCase()}. ${product}’s ${productFunctions} could fit naturally into ${contentScene}, giving you a useful way to feature it without changing the style of your content. ${sampleOffer} Would you be open to checking it out? ${commissionLine}`;
+    const dmTopic = compactDmPhrase(topic, 18);
+    const dmLead = compactDmPhrase(angle.dmLead, 32);
+    const dmProduct = compactDmPhrase(product, 24);
+    const dmFeature = compactDmPhrase(feature.toLowerCase(), 22);
+    const dmScene = compactDmPhrase(contentScene, 30);
+    const dmCommission = commission
+      ? `${commission} affiliate commission included.`
+      : 'Happy to share details.';
+    const dmOffer = freeSample
+      ? `We’d love to send one. Open to it?`
+      : 'Open to hearing more?';
+    let dm = finishDirectMessage(
+      `Love your take on ${dmTopic}, especially ${dmLead}. ${dmProduct} could fit naturally into ${dmScene}, with ${dmFeature} your audience can actually use. ${dmOffer}`,
+      dmCommission,
+    );
     let email = `Hi ${name},\n\nI’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. It feels like your audience values ${audienceNeed.toLowerCase()}.\n\n${product}’s ${productFunctions} could fit naturally into ${contentScene}. That gives you a clear, useful product moment inside the formats your audience already watches, without forcing a separate sponsor-style segment.\n\n${sampleOffer} Would you be open to taking a look?\n\n${commissionLine}\n\n— Partnerships team`;
     if (tone === 'shorter') {
-      dm = `I’ve been enjoying your ${topic} content, especially ${angle.dmLead}. Since your audience values ${audienceNeed.toLowerCase()}, ${product}’s ${feature.toLowerCase()} could fit naturally into ${contentScene}. Open to taking a look? ${commissionLine}`;
+      dm = finishDirectMessage(
+        `Loved your ${dmTopic} content—especially ${dmLead}. ${dmProduct} could fit naturally into ${dmScene}. ${dmOffer}`,
+        dmCommission,
+      );
       email = `Hi ${name},\n\nI’ve been enjoying your ${topic} content, especially ${angle.dmLead}. Since your audience values ${audienceNeed.toLowerCase()}, ${product}’s ${productFunctions} could fit naturally into ${contentScene}.\n\nOpen to taking a look? ${commissionLine}\n\n— Partnerships team`;
     } else if (tone === 'casual') {
-      dm = `Really enjoying your ${topic} content—especially ${angle.dmLead}. Your audience seems to value ${audienceNeed.toLowerCase()}, and ${product}’s ${feature.toLowerCase()} could work naturally for ${contentScene}. Want to take a look? ${commissionLine}`;
+      dm = finishDirectMessage(
+        `Really enjoying your ${dmTopic} content—especially ${dmLead}. ${dmProduct} feels like an easy fit for ${dmScene}, with ${dmFeature} your audience could actually use. ${dmOffer}`,
+        dmCommission,
+      );
     } else if (tone === 'soft') {
-      dm = `I’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. ${product}’s ${productFunctions} may fit naturally into ${contentScene}. Happy to share more if it feels relevant—no pressure at all. ${commissionLine}`;
+      dm = finishDirectMessage(
+        `I’ve been enjoying your ${dmTopic} content, especially ${dmLead}. ${dmProduct} may fit naturally into ${dmScene}. Happy to share more if it feels relevant—no pressure.`,
+        dmCommission,
+      );
       email = `Hi ${name},\n\nI’ve been enjoying your content on ${topic}, especially ${angle.dmLead}. ${product}’s ${productFunctions} may fit naturally into ${contentScene}.\n\nHappy to share more if it feels relevant—no pressure at all. ${commissionLine}\n\n— Partnerships team`;
     }
     return {
@@ -1296,6 +1369,109 @@ export default function Home() {
     }
   };
 
+  const applyVisualResult = (
+    video: CollectedVideo,
+    data: VisualResultPayload,
+  ) => {
+    const score = data.qualityScore ?? video.qualityScore;
+    const spokenTranscript =
+      data.spokenTranscript?.trim() || video.transcript || '';
+    const updated: CollectedVideo = {
+      ...video,
+      transcript: spokenTranscript,
+      spokenTranscriptProvider:
+        data.spokenTranscriptProvider ||
+        (spokenTranscript
+          ? video.spokenTranscriptProvider || 'supadata'
+          : 'none'),
+      spokenTranscriptStatus:
+        data.spokenTranscriptStatus ||
+        (spokenTranscript ? 'ready' : 'not_found'),
+      geminiStatus: data.geminiStatus || video.geminiStatus,
+      status: 'ready',
+      jobId: data.transcriptJobId || video.jobId,
+      visualJobId: undefined,
+      visualStatus: 'ready',
+      visualError: undefined,
+      visualText: data.visualText || [],
+      creatorSignals: data.creatorSignals || [],
+      contentType: data.contentType || '',
+      qualityScore: score,
+      qualityLabel:
+        data.isDanceOnly || score < 38
+          ? 'skip'
+          : score >= 65
+            ? 'strong'
+            : 'review',
+      qualityReason: data.qualityReason || video.qualityReason,
+    };
+    setCollectedVideos((current) =>
+      current.map((item) =>
+        item.id === video.id ? { ...item, ...updated } : item,
+      ),
+    );
+    if (selectedVideoIds.includes(video.id)) {
+      const index = selectedVideoIds.indexOf(video.id);
+      setTranscripts((current) =>
+        current.map((script, scriptIndex) =>
+          scriptIndex === index ? videoScript(updated) : script,
+        ),
+      );
+    }
+    return updated;
+  };
+
+  const pollVisualAnalysis = async (
+    video: CollectedVideo,
+    visualJobId: string,
+  ) => {
+    setAnalyzingVideoIds((current) =>
+      current.includes(video.id) ? current : [...current, video.id],
+    );
+    try {
+      for (let attempt = 0; attempt < 24; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const response = await fetch('/api/visual-status', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...demoCredentialHeaders(),
+          },
+          body: JSON.stringify({ jobId: visualJobId }),
+        });
+        const data = (await response.json()) as VisualResultPayload;
+        if (!response.ok || data.status === 'failed') {
+          throw new Error(data.error || 'TikTok visual analysis failed.');
+        }
+        if (data.status === 'processing') continue;
+        applyVisualResult(video, {
+          ...data,
+          spokenTranscriptProvider: data.spokenTranscript
+            ? 'supadata'
+            : video.spokenTranscriptProvider,
+        });
+        setCollectionMessage(
+          data.visualText?.length
+            ? `Screen text ready: ${data.visualText.length} useful text item${data.visualText.length === 1 ? '' : 's'} found.`
+            : 'The video was analyzed, but no meaningful screen text was found.',
+        );
+        return;
+      }
+      setCollectionMessage(
+        'Visual analysis is still processing. Use “Check screen text” on this card in a moment.',
+      );
+    } catch (error) {
+      const failureMessage =
+        error instanceof Error ? error.message : 'Visual analysis failed.';
+      setCollectedVideos(visualFailureUpdater(video.id, failureMessage));
+      setCollectionMessage(failureMessage);
+    } finally {
+      setAnalyzingVideoIds((current) =>
+        current.filter((id) => id !== video.id),
+      );
+    }
+  };
+
   const analyzeVisualText = async (
     video: CollectedVideo,
     file?: File,
@@ -1312,7 +1488,9 @@ export default function Home() {
       setCollectionMessage(
         file
           ? `Uploading ${file.name} and reading its visible text…`
-          : 'Reading the video script and visible text with Gemini…',
+          : video.platform === 'tiktok'
+            ? 'Reading the TikTok video’s speech and screen text with Supadata…'
+            : 'Reading the video script and visible text with Gemini…',
       );
     }
     setCollectedVideos((current) =>
@@ -1338,71 +1516,38 @@ export default function Home() {
         },
         body: requestBody,
       });
-      const data = (await response.json()) as {
-        error?: string;
-        status?: 'ready' | 'processing' | 'failed';
-        spokenTranscript?: string;
-        spokenTranscriptProvider?: 'gemini' | 'supadata' | 'none';
-        spokenTranscriptStatus?:
-          | 'ready'
-          | 'processing'
-          | 'not_found'
-          | 'failed';
-        transcriptJobId?: string;
-        geminiStatus?: 'ready' | 'ready_no_speech' | 'failed';
-        geminiError?: string;
-        visualText?: string[];
-        creatorSignals?: string[];
-        contentType?: string;
-        qualityScore?: number;
-        isDanceOnly?: boolean;
-        qualityReason?: string;
-      };
-      if (!response.ok || data.status !== 'ready') {
+      const data = (await response.json()) as VisualResultPayload;
+      if (!response.ok) {
         throw new Error(data.error || 'Gemini screen-text analysis failed.');
       }
-
-      const score = data.qualityScore ?? video.qualityScore;
-      const spokenTranscript =
-        data.spokenTranscript?.trim() || video.transcript || '';
-      const updated: CollectedVideo = {
-        ...video,
-        transcript: spokenTranscript,
-        spokenTranscriptProvider: data.spokenTranscriptProvider || 'none',
-        spokenTranscriptStatus:
-          data.spokenTranscriptStatus ||
-          (spokenTranscript ? 'ready' : 'not_found'),
-        geminiStatus: data.geminiStatus || 'ready',
-        status: 'ready',
-        jobId: data.transcriptJobId,
-        visualJobId: undefined,
-        visualStatus: 'ready',
-        visualError: undefined,
-        visualText: data.visualText || [],
-        creatorSignals: data.creatorSignals || [],
-        contentType: data.contentType || '',
-        qualityScore: score,
-        qualityLabel:
-          data.isDanceOnly || score < 38
-            ? 'skip'
-            : score >= 65
-              ? 'strong'
-              : 'review',
-        qualityReason: data.qualityReason || video.qualityReason,
-      };
-      setCollectedVideos((current) =>
-        current.map((item) =>
-          item.id === video.id ? { ...item, ...updated } : item,
-        ),
-      );
-      if (selectedVideoIds.includes(video.id)) {
-        const index = selectedVideoIds.indexOf(video.id);
-        setTranscripts((current) =>
-          current.map((script, scriptIndex) =>
-            scriptIndex === index ? videoScript(updated) : script,
+      if (data.status === 'processing' && data.visualJobId) {
+        setCollectedVideos((current) =>
+          current.map((item) =>
+            item.id === video.id
+              ? {
+                  ...item,
+                  visualJobId: data.visualJobId,
+                  visualStatus: 'processing',
+                  visualError: undefined,
+                }
+              : item,
           ),
         );
+        if (!background) {
+          setCollectionMessage(
+            'Supadata is reading the TikTok video’s speech and on-screen text directly. Results will appear on this card.',
+          );
+        }
+        await pollVisualAnalysis(video, data.visualJobId);
+        return true;
       }
+      if (data.status !== 'ready') {
+        throw new Error(data.error || 'Screen-text analysis failed.');
+      }
+
+      const spokenTranscript =
+        data.spokenTranscript?.trim() || video.transcript || '';
+      const updated = applyVisualResult(video, data);
       if (data.transcriptJobId) {
         void pollTranscript(updated);
       }
@@ -1671,7 +1816,8 @@ export default function Home() {
         })();
       } else if (!ready.length) {
         setCollectionMessage(
-          'Videos found. Scripts are still loading; select them only after they become ready.',
+          data.message ||
+            'Videos found. Scripts are still loading; select them only after they become ready.',
         );
       } else {
         setCollectionMessage(
@@ -2034,7 +2180,7 @@ export default function Home() {
             <p className="eyebrow">01 / CREATOR CONTENT</p>
             <h2 className="section-title">Understand the creator</h2>
           </div>
-          <div className="hidden items-center gap-2 text-xs text-white/40 sm:flex">
+          <div className="hidden items-center gap-2 text-xs text-black/40 sm:flex">
             <FileText className="size-4" /> {filledVideos} useful scripts ready
           </div>
         </div>
@@ -2060,19 +2206,16 @@ export default function Home() {
                 />
               </label>
             </div>
-            <div
-              className="mt-6 rounded-[18px] p-4 text-white"
-              style={{ backgroundColor: '#27322d' }}
-            >
+            <div className="mt-6 rounded-[20px] border border-[#27322d]/10 bg-[#edf7eb] p-4 text-[#27322d]">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
                   <Video className="size-4 text-[#ff5400]" /> Submit a Creator
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/8 px-2 py-1 text-[10px] font-semibold text-white/55">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-[#27322d]/10 bg-white px-2 py-1 text-[10px] font-semibold text-[#27322d]/60">
                     <ShieldCheck className="size-3" /> Auto-saved on this device
                   </span>
                 </div>
               </div>
-              <p className="mb-4 max-w-2xl text-xs leading-5 text-white/55">
+              <p className="mb-4 max-w-2xl text-xs leading-5 text-[#27322d]/65">
                 Choose one content channel, submit the creator, then review and
                 select the scripts that should influence product matching.
               </p>
@@ -2108,7 +2251,7 @@ export default function Home() {
                         setCollectionMessage('');
                       }}
                       aria-pressed={selected}
-                      className={`rounded-[14px] border p-3 text-left transition ${selected ? 'border-[#ff8b52] bg-[#ff5400] text-black shadow-[0_5px_0_#a93600]' : 'border-white/15 bg-white/8 text-white hover:border-white/35 hover:bg-white/12'}`}
+                      className={`rounded-[14px] border p-3 text-left transition ${selected ? 'border-[#ff8b52] bg-[#ff6a1a] text-black shadow-[0_5px_0_#b43b00]' : 'border-[#27322d]/12 bg-white text-[#27322d] hover:border-[#27322d]/35 hover:bg-[#fffefa]'}`}
                     >
                       <span className="flex items-center gap-2 text-sm font-black">
                         {source.id === 'tiktok' ? (
@@ -2119,7 +2262,7 @@ export default function Home() {
                         {source.label}
                       </span>
                       <span
-                        className={`mt-1 block text-[10px] font-semibold ${selected ? 'text-black/65' : 'text-white/45'}`}
+                        className={`mt-1 block text-[10px] font-semibold ${selected ? 'text-black/65' : 'text-[#27322d]/50'}`}
                       >
                         {source.note}
                       </span>
@@ -2129,7 +2272,7 @@ export default function Home() {
               </fieldset>
               <div className="grid gap-3">
                 {collectionSource !== 'tiktok' ? (
-                  <div className="text-xs font-semibold text-white/55">
+                  <div className="text-xs font-semibold text-[#27322d]/70">
                     {collectionSource === 'youtube'
                       ? 'YouTube channel, handle, or video URL'
                       : 'YouTube channel, handle, or Shorts URL'}
@@ -2148,29 +2291,29 @@ export default function Home() {
                           ? '@creator, channel URL, or video URL'
                           : '@creator, channel URL, or Shorts URL'
                       }
-                      className="mt-2 h-10 border-white/15 bg-white/8 text-white placeholder:text-white/35 focus-visible:border-[#ff5400] focus-visible:ring-0"
+                      className="mt-2 h-11 border-[#27322d]/15 bg-white text-[#27322d] shadow-sm placeholder:text-[#27322d]/35 focus-visible:border-[#ff5400] focus-visible:ring-2 focus-visible:ring-[#ff5400]/20"
                     />
                   </div>
                 ) : (
-                  <div className="text-xs font-semibold text-white/55">
-                    Public TikTok video links
+                  <div className="text-xs font-semibold text-[#27322d]/70">
+                    TikTok profile or public video links
                     <Textarea
-                      aria-label="Public TikTok video links"
+                      aria-label="TikTok profile or public video links"
                       value={collectionInput}
                       onChange={(event) =>
                         setCollectionInput(event.target.value)
                       }
                       placeholder={
-                        'Paste up to 8 links, one per line\nhttps://www.tiktok.com/@creator/video/…'
+                        'Profile: https://www.tiktok.com/@creator\nOr paste up to 8 video links, one per line'
                       }
-                      className="mt-2 min-h-[88px] resize-y border-white/15 bg-white/8 text-white placeholder:text-white/30 focus-visible:border-[#ff5400] focus-visible:ring-0"
+                      className="mt-2 min-h-[88px] resize-y border-[#27322d]/15 bg-white text-[#27322d] shadow-sm placeholder:text-[#27322d]/35 focus-visible:border-[#ff5400] focus-visible:ring-2 focus-visible:ring-[#ff5400]/20"
                     />
                   </div>
                 )}
                 <Button
                   onClick={collectCreatorContent}
                   disabled={collecting || !collectionInput.trim()}
-                  className="h-12 w-full rounded-[14px] border-2 border-[#ff8b52] bg-[#ff5400] px-5 text-base font-black text-black shadow-[0_7px_0_#a93600] transition hover:translate-y-0.5 hover:bg-[#ff6a1a] hover:shadow-[0_5px_0_#a93600] disabled:translate-y-0 disabled:border-white/10 disabled:bg-white/10 disabled:text-white/35 disabled:shadow-none"
+                  className="h-12 w-full rounded-[14px] border-2 border-[#ff8b52] bg-[#ff5400] px-5 text-base font-black text-black shadow-[0_7px_0_#a93600] transition hover:translate-y-0.5 hover:bg-[#ff6a1a] hover:shadow-[0_5px_0_#a93600] disabled:translate-y-0 disabled:border-[#27322d]/10 disabled:bg-[#27322d]/10 disabled:text-[#27322d]/35 disabled:shadow-none"
                 >
                   {collecting ? (
                     <RefreshCw className="animate-spin" />
@@ -2187,19 +2330,24 @@ export default function Home() {
                       ? isYouTubeVideoInput(collectionInput)
                         ? 'Submit Short & analyze video'
                         : 'Submit Creator & collect latest 7 Shorts'
-                      : 'Submit video links & build candidate pool'}
+                      : /^@?[\w.-]+$/.test(collectionInput.trim()) ||
+                          /tiktok\.com\/@[^/]+\/?(?:\?.*)?$/.test(
+                            collectionInput.trim(),
+                          )
+                        ? 'Submit Creator & collect latest 8 videos'
+                        : 'Submit video links & build candidate pool'}
                 </Button>
               </div>
-              <p className="mt-3 text-xs leading-5 text-white/40">
+              <p className="mt-3 text-xs leading-5 text-[#27322d]/55">
                 {collectionSource === 'youtube'
                   ? 'Enter a channel name, @handle, channel URL, or one video URL. Channels return the latest 7 regular videos; a video URL analyzes that video only.'
                   : collectionSource === 'youtube-shorts'
                     ? 'Enter a channel name, @handle, channel URL, or one Shorts URL. Channels return the latest 7 Shorts; a video URL analyzes that Short only.'
-                    : 'Paste up to 8 public links. Spoken scripts load first; upload the saved video to Gemini when the visuals carry important text.'}
+                    : 'Enter a @handle or TikTok profile URL to load the latest 8 public videos, or paste individual links. Supadata can read speech and screen text directly from each video card.'}
               </p>
               {collectionMessage && (
                 <p
-                  className="mt-3 rounded-[12px] bg-white/8 px-3 py-2 text-xs leading-5 text-white/65"
+                  className="mt-3 rounded-[12px] border border-[#27322d]/8 bg-white px-3 py-2 text-xs font-semibold leading-5 text-[#27322d]/70"
                   aria-live="polite"
                 >
                   {collectionMessage}
@@ -2347,31 +2495,33 @@ export default function Home() {
                             </Button>
                           ) : null}
                           {video.platform === 'tiktok' ? (
-                            <label
-                              className={`mt-2 inline-flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-black/15 bg-white px-3 text-[11px] font-bold transition hover:bg-black/[.04] ${analyzing ? 'pointer-events-none opacity-50' : ''}`}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                video.visualJobId
+                                  ? void pollVisualAnalysis(
+                                      video,
+                                      video.visualJobId,
+                                    )
+                                  : void analyzeVisualText(video)
+                              }
+                              disabled={analyzing}
+                              className="mt-2 h-8 w-full rounded-full text-[11px] font-bold"
                             >
                               {analyzing ? (
                                 <RefreshCw className="size-4 animate-spin" />
                               ) : (
-                                <Upload className="size-4" />
+                                <ScanText className="size-4" />
                               )}
                               {analyzing
-                                ? 'Gemini is reading video…'
+                                ? 'Reading TikTok video…'
                                 : video.visualStatus === 'ready'
-                                  ? 'Upload again for screen text'
-                                  : 'Upload video for screen text'}
-                              <input
-                                type="file"
-                                accept="video/mp4,video/quicktime,video/webm,video/*"
-                                className="sr-only"
-                                disabled={analyzing}
-                                onChange={(event) => {
-                                  const file = event.currentTarget.files?.[0];
-                                  if (file) void analyzeVisualText(video, file);
-                                  event.currentTarget.value = '';
-                                }}
-                              />
-                            </label>
+                                  ? 'Re-read screen text'
+                                  : video.visualJobId
+                                    ? 'Check screen text'
+                                    : 'Read screen text'}
+                            </Button>
                           ) : (
                             <Button
                               type="button"
@@ -3077,7 +3227,17 @@ export default function Home() {
                   <span>
                     Edit directly — your changes are saved automatically.
                   </span>
-                  <span>{result.dm.length} characters</span>
+                  <span
+                    className={
+                      result.dm.length > 300
+                        ? 'font-bold text-[#b4382a]'
+                        : result.dm.length >= 180
+                          ? 'font-bold text-[#276b36]'
+                          : undefined
+                    }
+                  >
+                    {result.dm.length} characters · ideal 180–300
+                  </span>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {[

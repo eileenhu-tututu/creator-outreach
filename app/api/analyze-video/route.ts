@@ -80,6 +80,19 @@ const isYouTubeUrl = (value: string) => {
   }
 };
 
+const isTikTokVideoUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./, '');
+    return (
+      (host === 'tiktok.com' || host.endsWith('.tiktok.com')) &&
+      url.pathname.includes('/video/')
+    );
+  } catch {
+    return false;
+  }
+};
+
 const isDirectVideoUrl = (value: string) => {
   try {
     return /\.(mp4|mov|webm|m4v)$/i.test(new URL(value).pathname);
@@ -157,6 +170,61 @@ const normalize = (data: VisualAnalysis) => ({
 });
 
 export async function POST(request: Request) {
+  const contentType = request.headers.get('content-type') || '';
+  let prefetchedSourceUrl = '';
+  if (!contentType.includes('multipart/form-data')) {
+    const body = (await request.json().catch(() => ({}))) as { url?: string };
+    prefetchedSourceUrl = body.url?.trim() || '';
+    if (!prefetchedSourceUrl) {
+      return Response.json({ error: 'Missing video URL.' }, { status: 400 });
+    }
+    if (isTikTokVideoUrl(prefetchedSourceUrl)) {
+      const supadataKey = requestCredential(
+        request,
+        'x-demo-supadata-api-key',
+        'SUPADATA_API_KEY',
+      );
+      if (!supadataKey) {
+        return Response.json(
+          { error: 'Add SUPADATA_API_KEY to read TikTok screen text.' },
+          { status: 503 },
+        );
+      }
+      const response = await fetch('https://api.supadata.ai/v1/extract', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': supadataKey,
+        },
+        body: JSON.stringify({
+          url: prefetchedSourceUrl,
+          prompt,
+          schema,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        jobId?: string;
+        error?: string;
+        message?: string;
+      };
+      if (!response.ok || !data.jobId) {
+        return Response.json(
+          {
+            error:
+              data.message ||
+              data.error ||
+              'Supadata could not start TikTok visual analysis.',
+          },
+          { status: response.status || 502 },
+        );
+      }
+      return Response.json(
+        { status: 'processing', visualJobId: data.jobId },
+        { status: 202 },
+      );
+    }
+  }
+
   const geminiKey = requestCredential(
     request,
     'x-demo-gemini-api-key',
@@ -177,7 +245,6 @@ export async function POST(request: Request) {
   let uploadedName = '';
   let sourceUrl = '';
   try {
-    const contentType = request.headers.get('content-type') || '';
     let videoPart:
       | {
           file_data: { file_uri: string; mime_type?: string };
@@ -216,8 +283,7 @@ export async function POST(request: Request) {
         video_metadata: { fps: 3 },
       };
     } else {
-      const body = (await request.json().catch(() => ({}))) as { url?: string };
-      const url = body.url?.trim() || '';
+      const url = prefetchedSourceUrl;
       if (!url) {
         return Response.json({ error: 'Missing video URL.' }, { status: 400 });
       }

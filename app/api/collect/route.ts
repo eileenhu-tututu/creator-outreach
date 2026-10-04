@@ -62,6 +62,19 @@ type SupadataMetadata = {
   author?: { name?: string; id?: string; url?: string };
 };
 
+type TikWmVideo = {
+  video_id?: string;
+  title?: string;
+  cover?: string;
+  create_time?: number;
+};
+
+type TikWmResponse = {
+  code?: number;
+  msg?: string;
+  data?: { videos?: TikWmVideo[] };
+};
+
 type CollectedVideo = {
   id: string;
   platform: CollectionSource;
@@ -138,9 +151,6 @@ const transcriptText = (data: SupadataTranscript) =>
           .trim()
       : '';
 
-const wait = (milliseconds: number) =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
-
 async function providerError(
   response: Response,
   provider: 'YouTube' | 'Supadata',
@@ -206,35 +216,11 @@ async function fetchTranscript(url: string, apiKey: string) {
     return { transcript: '', status: 'failed' as const };
   }
 
-  let data = (await response.json()) as SupadataTranscript;
-  let text = transcriptText(data);
+  const data = (await response.json()) as SupadataTranscript;
+  const text = transcriptText(data);
   if (text) return { transcript: text, status: 'ready' as const };
 
   if (!data.jobId) return { transcript: '', status: 'failed' as const };
-
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    await wait(1000);
-    const jobResponse = await fetch(
-      `${supadataBase}/transcript/${data.jobId}`,
-      {
-        headers: { 'x-api-key': apiKey },
-      },
-    );
-    if (!jobResponse.ok) break;
-    data = (await jobResponse.json()) as SupadataTranscript;
-    text = transcriptText(data);
-    if (text || data.status === 'completed') {
-      return {
-        transcript: text,
-        status: text ? ('ready' as const) : ('failed' as const),
-        jobId: data.jobId,
-      };
-    }
-    if (data.status === 'failed') {
-      return { transcript: '', status: 'failed' as const, jobId: data.jobId };
-    }
-  }
-
   return {
     transcript: '',
     status: 'processing' as const,
@@ -584,6 +570,57 @@ const isTikTokVideoUrl = (value: string) => {
   }
 };
 
+const tiktokProfileHandle = (value: string) => {
+  const input = value.trim();
+  if (/^@?[\w.-]+$/.test(input)) return input.replace(/^@/, '');
+  try {
+    const url = new URL(input);
+    const host = url.hostname.toLowerCase();
+    if (host !== 'tiktok.com' && !host.endsWith('.tiktok.com')) return '';
+    const match = url.pathname.match(/^\/@([^/]+)\/?$/);
+    return match?.[1] || '';
+  } catch {
+    return '';
+  }
+};
+
+async function tiktokProfileVideos(handle: string, maxVideos: number) {
+  const feedUrl = new URL('https://www.tikwm.com/api/user/posts');
+  feedUrl.search = new URLSearchParams({
+    unique_id: handle,
+    count: String(maxVideos),
+    cursor: '0',
+  }).toString();
+  const response = await fetch(feedUrl, {
+    headers: {
+      accept: 'application/json',
+      referer: 'https://www.tikwm.com/',
+      'user-agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/129.0.0.0 Safari/537.36',
+    },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    throw new Error(`TikTok profile provider returned ${response.status}.`);
+  }
+  const data = (await response.json()) as TikWmResponse;
+  const videos = (data.data?.videos || [])
+    .filter((video) => /^\d+$/.test(video.video_id || ''))
+    .slice(0, maxVideos)
+    .map((video) => ({
+      url: `https://www.tiktok.com/@${handle}/video/${video.video_id}`,
+      title: video.title || '',
+      thumbnail: video.cover || '',
+      publishedAt: video.create_time
+        ? new Date(video.create_time * 1000).toISOString()
+        : undefined,
+    }));
+  if (!videos.length) {
+    throw new Error(data.msg || 'No public videos were returned.');
+  }
+  return videos;
+}
+
 const tiktokHandle = (value: string) => {
   try {
     return new URL(value).pathname.match(/\/(@[^/]+)/)?.[1] || 'tiktok-creator';
@@ -597,7 +634,29 @@ async function collectTikToks(
   maxVideos: number,
   supadataKey: string,
 ) {
-  const urls = tiktokUrls(input);
+  const profileHandle = tiktokProfileHandle(input);
+  let profileVideos: Array<{
+    url: string;
+    title: string;
+    thumbnail: string;
+    publishedAt?: string;
+  }> = [];
+  if (profileHandle) {
+    try {
+      profileVideos = await tiktokProfileVideos(profileHandle, maxVideos);
+    } catch (error) {
+      return Response.json(
+        {
+          error: 'tiktok_profile_unavailable',
+          message: `The TikTok profile could not be expanded right now. ${error instanceof Error ? error.message : ''} You can still paste 1–8 public video links.`,
+        },
+        { status: 502 },
+      );
+    }
+  }
+  const urls = profileVideos.length
+    ? profileVideos.map((video) => video.url)
+    : tiktokUrls(input);
   if (
     !urls.length ||
     urls.length > 8 ||
@@ -617,6 +676,7 @@ async function collectTikToks(
     urls
       .slice(0, maxVideos)
       .map(async (url, index): Promise<CollectedVideo> => {
+        const profileVideo = profileVideos[index];
         const metadataUrl = new URL(`${supadataBase}/metadata`);
         metadataUrl.search = new URLSearchParams({ url }).toString();
         const [metadataResponse, transcript] = await Promise.all([
@@ -639,9 +699,10 @@ async function collectTikToks(
           title:
             metadata.title ||
             metadata.description ||
+            profileVideo?.title ||
             `TikTok video ${index + 1}`,
-          publishedAt: metadata.publishedAt,
-          thumbnail: metadata.thumbnail,
+          publishedAt: metadata.publishedAt || profileVideo?.publishedAt,
+          thumbnail: metadata.thumbnail || profileVideo?.thumbnail,
           url: metadata.url || url,
           description,
           ...transcript,
@@ -651,11 +712,14 @@ async function collectTikToks(
   );
 
   const firstUrl = urls[0];
-  const creator = tiktokHandle(firstUrl);
+  const creator = profileHandle ? `@${profileHandle}` : tiktokHandle(firstUrl);
   return Response.json({
     source: 'tiktok',
     channel: { id: creator, title: creator.replace(/^@/, '') },
     videos,
+    message: profileHandle
+      ? `${videos.length} recent TikTok videos found from @${profileHandle}. Spoken transcripts are loading; screen text can be read directly from each card.`
+      : `${videos.length} TikTok videos added. Spoken transcripts are loading; screen text can be read directly from each card.`,
   });
 }
 
